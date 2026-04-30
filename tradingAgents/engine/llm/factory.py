@@ -74,7 +74,7 @@ class LLMFactory:
         Returns:
             ChatOpenAI 实例
         """
-        from config.settings import settings
+        from tradingAgents.config.settings import settings
 
         provider = LLMProvider(settings.llm_provider)
         key_attr = f"{provider.value}_api_key"

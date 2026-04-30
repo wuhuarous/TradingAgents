@@ -1,6 +1,6 @@
 """Tests for LLM multi-provider factory"""
 import pytest
-from engine.llm.factory import LLMFactory, LLMProvider
+from tradingAgents.engine.llm.factory import LLMFactory, LLMProvider
 
 
 class TestLLMFactory:
@@ -23,9 +23,9 @@ class TestLLMFactory:
             LLMFactory.create("unsupported_provider", api_key="test", model="x")
 
     def test_create_from_settings_with_env_defaults(self, monkeypatch):
-        monkeypatch.setattr("config.settings.settings.deepseek_api_key", "env-key")
-        monkeypatch.setattr("config.settings.settings.llm_provider", "deepseek")
-        monkeypatch.setattr("config.settings.settings.deep_think_model", "deepseek-reasoner")
+        monkeypatch.setattr("tradingAgents.config.settings.settings.deepseek_api_key", "env-key")
+        monkeypatch.setattr("tradingAgents.config.settings.settings.llm_provider", "deepseek")
+        monkeypatch.setattr("tradingAgents.config.settings.settings.deep_think_model", "deepseek-reasoner")
 
         client = LLMFactory.create_from_settings()
         assert client is not None
