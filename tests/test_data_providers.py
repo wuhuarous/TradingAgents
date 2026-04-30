@@ -1,9 +1,11 @@
-"""Tests for data source interface and yfinance provider"""
+"""Tests for data source interface and providers"""
 import os
 import pytest
 import pandas as pd
 from tradingAgents.engine.dataflows.interface import DataSourceProvider, StockQuote, Market
 from tradingAgents.engine.dataflows.yfinance import YFinanceProvider
+from tradingAgents.data.providers.a_stock import AStockProvider
+from tradingAgents.data.providers.hk_us_stock import HKUSStockProvider, get_provider
 
 network = pytest.mark.skipif(
     os.environ.get("SKIP_NETWORK", "") == "1",
@@ -68,7 +70,60 @@ class TestYFinanceNetwork:
         assert quote.market == Market.HK
 
     def test_yfinance_error_yields_default_quote(self):
-        provider = YFinanceProvider()
-        quote = provider.get_realtime_quote("ZZZ_UNKNOWN_999", Market.US)
+        quote = YFinanceProvider().get_realtime_quote("ZZZ_UNKNOWN_999", Market.US)
         assert isinstance(quote, StockQuote)
         assert quote.symbol == "ZZZ_UNKNOWN_999"
+
+
+class TestAStockUnit:
+    """Pure unit tests for A-stock provider — no network needed"""
+
+    def test_implements_interface(self):
+        assert isinstance(AStockProvider(), DataSourceProvider)
+
+    def test_financials_returns_dict(self):
+        data = AStockProvider().get_financials("000001", Market.A)
+        assert isinstance(data, dict)
+
+    def test_news_returns_list(self):
+        items = AStockProvider().get_news("000001", Market.A)
+        assert isinstance(items, list)
+
+    def test_search_returns_list(self):
+        results = AStockProvider().search_symbols("平安", Market.A)
+        assert isinstance(results, list)
+
+    def test_error_fallback_default_quote(self):
+        quote = AStockProvider().get_realtime_quote("999999", Market.A)
+        assert isinstance(quote, StockQuote)
+        assert quote.symbol == "999999"
+        assert quote.market == Market.A
+
+
+@network
+class TestAStockNetwork:
+    """Integration tests — require network to AkShare"""
+
+    def test_get_realtime_quote(self):
+        quote = AStockProvider().get_realtime_quote("000001", Market.A)
+        assert isinstance(quote, StockQuote)
+        assert quote.symbol == "000001"
+        assert quote.market == Market.A
+
+    def test_get_historical(self):
+        df = AStockProvider().get_historical("000001", Market.A, period="5d")
+        assert isinstance(df, pd.DataFrame)
+
+
+class TestProviderFactory:
+    def test_get_provider_a_stock(self):
+        provider = get_provider(Market.A)
+        assert isinstance(provider, (AStockProvider, DataSourceProvider))
+
+    def test_get_provider_hk(self):
+        provider = get_provider(Market.HK)
+        assert isinstance(provider, (HKUSStockProvider, DataSourceProvider))
+
+    def test_get_provider_us(self):
+        provider = get_provider(Market.US)
+        assert isinstance(provider, (HKUSStockProvider, DataSourceProvider))
