@@ -33,10 +33,14 @@ class Settings(BaseSettings):
     total_position_max_ratio: float = 0.8
     daily_stop_loss_ratio: float = 0.03
 
+    # Database
+    postgresql_url: str = "postgresql+asyncpg://trading:trading@localhost:5432/trading"
+    clickhouse_url: str = "http://localhost:8123"
+    clickhouse_database: str = "trading"
+
     # Paths — resolved relative to project root
     data_dir: str = str(PROJECT_ROOT / "data" / "cache")
     memory_dir: str = str(PROJECT_ROOT / "memory")
-    db_path: str = str(PROJECT_ROOT / "data" / "trading.db")
 
     # Scheduler
     pre_market_analysis_time: str = "08:00"
