@@ -33,6 +33,10 @@ dev = [
     "pytest-cov>=5.0.0",
 ]
 
+[build-system]
+requires = ["setuptools>=64.0"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = "test_*.py"

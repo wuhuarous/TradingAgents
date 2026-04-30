@@ -1,6 +1,9 @@
 """全局配置，从环境变量 + .env 文件加载"""
+from pathlib import Path
+from pydantic import model_validator
 from pydantic_settings import BaseSettings
-from typing import Optional
+
+PROJECT_ROOT = Path(__file__).parent.parent.resolve()
 
 
 class Settings(BaseSettings):
@@ -30,15 +33,30 @@ class Settings(BaseSettings):
     total_position_max_ratio: float = 0.8
     daily_stop_loss_ratio: float = 0.03
 
-    # Paths
-    data_dir: str = "data/cache"
-    memory_dir: str = "memory"
-    db_path: str = "data/trading.db"
+    # Paths — resolved relative to project root
+    data_dir: str = str(PROJECT_ROOT / "data" / "cache")
+    memory_dir: str = str(PROJECT_ROOT / "memory")
+    db_path: str = str(PROJECT_ROOT / "data" / "trading.db")
 
     # Scheduler
     pre_market_analysis_time: str = "08:00"
     market_open_time: str = "09:30"
     market_close_time: str = "15:00"
+
+    @model_validator(mode="after")
+    def _validate_api_keys(self):
+        """Ensure the active LLM provider has an API key configured."""
+        provider_keys = {
+            "deepseek": self.deepseek_api_key,
+            "openai": self.openai_api_key,
+            "anthropic": self.anthropic_api_key,
+        }
+        if not provider_keys.get(self.llm_provider):
+            raise ValueError(
+                f"LLM provider '{self.llm_provider}' selected but no API key configured. "
+                f"Set {self.llm_provider.upper()}_API_KEY in .env"
+            )
+        return self
 
 
 settings = Settings()
