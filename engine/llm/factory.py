@@ -21,11 +21,10 @@ class LLMProvider(str, Enum):
 class LLMFactory:
     """LLM 客户端工厂，支持多供应商创建"""
 
-    # 供应商默认配置: (base_url, display_name)
-    _PROVIDER_MAP = {
-        LLMProvider.DEEPSEEK: ("https://api.deepseek.com", "DeepSeek"),
-        LLMProvider.OPENAI: ("https://api.openai.com/v1", "OpenAI"),
-        LLMProvider.ANTHROPIC: ("https://api.anthropic.com", "Anthropic"),
+    _PROVIDER_BASE_URLS = {
+        LLMProvider.DEEPSEEK: "https://api.deepseek.com",
+        LLMProvider.OPENAI: "https://api.openai.com/v1",
+        LLMProvider.ANTHROPIC: "https://api.anthropic.com",
     }
 
     @staticmethod
@@ -51,13 +50,13 @@ class LLMFactory:
         Raises:
             ValueError: 不支持的供应商
         """
-        if provider not in LLMFactory._PROVIDER_MAP:
+        if provider not in LLMFactory._PROVIDER_BASE_URLS:
             raise ValueError(
                 f"Unsupported provider: {provider}. "
-                f"Supported: {[p.value for p in LLMFactory._PROVIDER_MAP]}"
+                f"Supported: {[p.value for p in LLMFactory._PROVIDER_BASE_URLS]}"
             )
 
-        default_url, _ = LLMFactory._PROVIDER_MAP[provider]
+        default_url = LLMFactory._PROVIDER_BASE_URLS[provider]
         return ChatOpenAI(
             model=model,
             api_key=api_key,
@@ -78,13 +77,10 @@ class LLMFactory:
         from config.settings import settings
 
         provider = LLMProvider(settings.llm_provider)
-        api_key_map = {
-            LLMProvider.DEEPSEEK: settings.deepseek_api_key,
-            LLMProvider.OPENAI: settings.openai_api_key,
-            LLMProvider.ANTHROPIC: settings.anthropic_api_key,
-        }
+        key_attr = f"{provider.value}_api_key"
+        api_key = getattr(settings, key_attr, "")
         return LLMFactory.create(
             provider=provider,
-            api_key=api_key_map[provider],
+            api_key=api_key,
             model=model or settings.deep_think_model,
         )

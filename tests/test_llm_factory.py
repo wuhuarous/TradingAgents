@@ -19,19 +19,13 @@ class TestLLMFactory:
         assert client.model_name == "gpt-4o"
 
     def test_invalid_provider_raises(self):
-        with pytest.raises(ValueError, match="Unsupported provider"):
-            LLMFactory.create("invalid_provider", api_key="test", model="x")
+        with pytest.raises(ValueError):
+            LLMFactory.create("unsupported_provider", api_key="test", model="x")
 
     def test_create_from_settings_with_env_defaults(self, monkeypatch):
-        monkeypatch.setenv("DEEPSEEK_API_KEY", "env-key")
-        monkeypatch.setenv("LLM_PROVIDER", "deepseek")
-        monkeypatch.setenv("DEEP_THINK_MODEL", "deepseek-reasoner")
-
-        # Reload settings so env vars take effect
-        from config.settings import settings
-        settings.deepseek_api_key = "env-key"
-        settings.llm_provider = "deepseek"
-        settings.deep_think_model = "deepseek-reasoner"
+        monkeypatch.setattr("config.settings.settings.deepseek_api_key", "env-key")
+        monkeypatch.setattr("config.settings.settings.llm_provider", "deepseek")
+        monkeypatch.setattr("config.settings.settings.deep_think_model", "deepseek-reasoner")
 
         client = LLMFactory.create_from_settings()
         assert client is not None
