@@ -1,0 +1,135 @@
+:root {
+  --bg-primary: #0a0e14;
+  --bg-secondary: #131820;
+  --bg-card: #1a1f2b;
+  --text-primary: #e6e6e6;
+  --text-secondary: #8b95a5;
+  --accent-green: #00c853;
+  --accent-red: #ff1744;
+  --accent-blue: #448aff;
+  --border: #2a3040;
+  --radius: 8px;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+}
+
+.app-layout { display: flex; min-height: 100vh; }
+.sidebar {
+  width: 220px;
+  background: var(--bg-secondary);
+  padding: 24px 16px;
+  border-right: 1px solid var(--border);
+}
+.sidebar .logo {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--accent-blue);
+  margin-bottom: 32px;
+}
+.nav-links { list-style: none; }
+.nav-links li { margin-bottom: 8px; }
+.nav-links a {
+  color: var(--text-secondary);
+  text-decoration: none;
+  font-size: 14px;
+  padding: 8px 12px;
+  display: block;
+  border-radius: var(--radius);
+}
+.nav-links a:hover {
+  background: var(--bg-card);
+  color: var(--text-primary);
+}
+.main-content { flex: 1; padding: 32px; overflow-y: auto; }
+
+.account-cards {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+  margin-bottom: 32px;
+}
+.card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px;
+}
+.card-label {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-bottom: 8px;
+  text-transform: uppercase;
+}
+.card-value { font-size: 24px; font-weight: 700; }
+.card.profit .card-value { color: var(--accent-green); }
+.card.loss .card-value { color: var(--accent-red); }
+.pct { font-size: 14px; margin-left: 8px; }
+
+.section { margin-bottom: 32px; }
+.section h2 { font-size: 18px; margin-bottom: 16px; color: var(--text-primary); }
+
+.data-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.data-table th, .data-table td {
+  padding: 10px 12px;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+}
+.data-table th {
+  color: var(--text-secondary);
+  font-weight: 500;
+  text-transform: uppercase;
+  font-size: 11px;
+}
+.profit { color: var(--accent-green); }
+.loss { color: var(--accent-red); }
+.buy-action { color: var(--accent-green); font-weight: 600; }
+.sell-action { color: var(--accent-red); font-weight: 600; }
+
+.stock-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 16px;
+}
+.stock-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+}
+.stock-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+.stock-symbol { font-size: 16px; font-weight: 700; }
+.action-badge { padding: 2px 8px; border-radius: 4px; font-size: 12px; font-weight: 600; }
+.action-badge.buy { background: rgba(0, 200, 83, 0.15); color: var(--accent-green); }
+.action-badge.sell { background: rgba(255, 23, 68, 0.15); color: var(--accent-red); }
+.stock-body { font-size: 13px; color: var(--text-secondary); line-height: 1.8; }
+.stock-footer {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.empty-state { padding: 40px; text-align: center; color: var(--text-secondary); }
+.chart-placeholder {
+  height: 200px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-card);
+  border-radius: var(--radius);
+  color: var(--text-secondary);
+  font-size: 14px;
+}
+.loading { padding: 40px; text-align: center; }
+.placeholder { color: var(--text-secondary); font-style: italic; }
