@@ -1,5 +1,3 @@
-version: "3.8"
-
 services:
   nginx:
     build:
@@ -13,8 +11,8 @@ services:
 
   app:
     build: .
-    expose:
-      - "8000"
+    ports:
+      - "8089:8089"
     volumes:
       - ./data:/app/data
       - ./memory:/app/memory
@@ -35,8 +33,8 @@ services:
 
   postgres:
     image: postgres:16-alpine
-    expose:
-      - "5432"
+    ports:
+      - "5432:5432"
     environment:
       - POSTGRES_USER=trading
       - POSTGRES_PASSWORD=trading123
@@ -52,9 +50,9 @@ services:
 
   clickhouse:
     image: clickhouse/clickhouse-server:24-alpine
-    expose:
-      - "8123"
-      - "9000"
+    ports:
+      - "8123:8123"
+      - "9000:9000"
     volumes:
       - chdata:/var/lib/clickhouse
     healthcheck:

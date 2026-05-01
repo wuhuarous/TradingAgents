@@ -33,9 +33,9 @@ class Settings(BaseSettings):
     daily_stop_loss_ratio: float = 0.03
 
     # Database
-    postgresql_url: str = "postgresql+asyncpg://trading:trading@localhost:5432/trading"
-    clickhouse_url: str = "http://localhost:8123"
-    clickhouse_database: str = "trading"
+    postgresql_url: str = "postgresql+asyncpg://trading:trading@119.91.40.149:5432/tradingagents"
+    clickhouse_url: str = "http://119.91.40.149:8123"
+    clickhouse_database: str = "tradingagents"
 
     # Paths — resolved relative to project root
     data_dir: str = str(PROJECT_ROOT / "data" / "cache")

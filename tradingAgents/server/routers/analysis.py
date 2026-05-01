@@ -17,8 +17,11 @@ def run_stock_analysis(req: StockAnalysisRequest):
                 "market": result.get("market_report"),
                 "fundamentals": result.get("fundamentals_report"),
                 "news": result.get("news_report"),
+                "bull": result.get("bull_report"),
+                "bear": result.get("bear_report"),
                 "research_decision": result.get("research_decision"),
                 "risk_evaluations": result.get("risk_evaluations"),
+                "final_risk_params": result.get("final_risk_params"),
             },
             trader_decision=result.get("trader_decision", {}),
         )

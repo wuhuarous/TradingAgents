@@ -11,31 +11,38 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
         <ul className="sidebar-nav">
           <li>
-            <NavLink
-              to="/"
-              end
-              className={({ isActive }) => isActive ? 'active' : ''}
-            >
-              <span className="nav-icon">⊡</span>
-              仪表盘
+            <NavLink to="/" end className={({ isActive }) => isActive ? 'active' : ''}>
+              <span className="nav-icon">⊡</span>仪表盘
             </NavLink>
           </li>
           <li>
-            <NavLink
-              to="/trades"
-              className={({ isActive }) => isActive ? 'active' : ''}
-            >
-              <span className="nav-icon">⊞</span>
-              交易记录
+            <NavLink to="/market" className={({ isActive }) => isActive ? 'active' : ''}>
+              <span className="nav-icon">⊟</span>行情总览
             </NavLink>
           </li>
           <li>
-            <NavLink
-              to="/settings"
-              className={({ isActive }) => isActive ? 'active' : ''}
-            >
-              <span className="nav-icon">⊠</span>
-              系统配置
+            <NavLink to="/screener" className={({ isActive }) => isActive ? 'active' : ''}>
+              <span className="nav-icon">⊞</span>智能选股
+            </NavLink>
+          </li>
+          <li>
+            <NavLink to="/news" className={({ isActive }) => isActive ? 'active' : ''}>
+              <span className="nav-icon">⊠</span>新闻舆情
+            </NavLink>
+          </li>
+          <li>
+            <NavLink to="/analysis" className={({ isActive }) => isActive ? 'active' : ''}>
+              <span className="nav-icon">◎</span>深度分析
+            </NavLink>
+          </li>
+          <li>
+            <NavLink to="/trades" className={({ isActive }) => isActive ? 'active' : ''}>
+              <span className="nav-icon">⊡</span>交易记录
+            </NavLink>
+          </li>
+          <li>
+            <NavLink to="/settings" className={({ isActive }) => isActive ? 'active' : ''}>
+              <span className="nav-icon">⚙</span>系统配置
             </NavLink>
           </li>
         </ul>
