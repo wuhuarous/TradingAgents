@@ -79,6 +79,11 @@ class LLMFactory:
         provider = LLMProvider(settings.llm_provider)
         key_attr = f"{provider.value}_api_key"
         api_key = getattr(settings, key_attr, "")
+        if not api_key:
+            raise ValueError(
+                f"LLM provider '{provider.value}' selected but no API key configured. "
+                f"Set {provider.value.upper()}_API_KEY in .env"
+            )
         return LLMFactory.create(
             provider=provider,
             api_key=api_key,
