@@ -1,0 +1,41 @@
+version: "3.8"
+
+services:
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+      - ./memory:/app/memory
+    environment:
+      - TRADINGAGENTS_LLM_PROVIDER=${TRADINGAGENTS_LLM_PROVIDER:-deepseek}
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - TRADINGAGENTS_POSTGRESQL_URL=${TRADINGAGENTS_POSTGRESQL_URL:-}
+      - TRADINGAGENTS_CLICKHOUSE_URL=${TRADINGAGENTS_CLICKHOUSE_URL:-}
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16-alpine
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=trading
+      - POSTGRES_PASSWORD=trading123
+      - POSTGRES_DB=tradingagents
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:24-alpine
+    ports:
+      - "8123:8123"
+      - "9000:9000"
+    volumes:
+      - chdata:/var/lib/clickhouse
+
+volumes:
+  pgdata:
+  chdata:
