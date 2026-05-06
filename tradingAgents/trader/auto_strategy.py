@@ -177,6 +177,7 @@ class QualityMomentumStrategy:
         technical = _technical_snapshot(hist)
         sentiment = _sentiment_snapshot(news)
         fundamentals = _fundamental_snapshot(fin)
+        short_term = _short_term_snapshot(hist, quote, fundamentals)
         _persist_strategy_news(news, market, symbol, name)
         market_quote_event = {
             "created_at": datetime.now().isoformat(timespec="seconds"),
@@ -224,6 +225,7 @@ class QualityMomentumStrategy:
         sentiment_score = _sentiment_score(sentiment)
         liquidity_score = _liquidity_score(getattr(quote, "volume", 0), price)
         risk_score = _risk_score(fundamentals, technical, sentiment)
+        short_term_score = short_term.get("score", 0)
 
         final_score = (
             0.22 * quality_score
@@ -234,10 +236,14 @@ class QualityMomentumStrategy:
             + 0.08 * liquidity_score
             - 0.18 * risk_score
         )
+        if short_term_score >= 80:
+            final_score = max(final_score, min(short_term_score - 3, 88))
+        elif short_term_score >= 70:
+            final_score = max(final_score, min(short_term_score - 8, 78))
         final_score = _clamp(final_score, 0, 100)
 
         risk_level = _risk_level(risk_score)
-        action = _action_from_score(final_score, risk_level, momentum_score, sentiment_score)
+        action = _action_from_score(final_score, risk_level, momentum_score, sentiment_score, short_term_score)
         reasons, warnings = _explain(
             final_score,
             fundamentals,
@@ -249,6 +255,9 @@ class QualityMomentumStrategy:
             momentum_score,
             risk_score,
         )
+        reasons.extend(short_term.get("reasons", [])[:4])
+        warnings.extend(short_term.get("warnings", [])[:3])
+        plan = _trade_plan(price, action, self.config, short_term)
 
         result = {
             "symbol": symbol,
@@ -270,18 +279,15 @@ class QualityMomentumStrategy:
                 "sentiment": round(sentiment_score, 1),
                 "liquidity": round(liquidity_score, 1),
                 "risk": round(risk_score, 1),
+                "short_term": round(short_term_score, 1),
             },
             "fundamentals": fundamentals,
             "technical": technical,
+            "short_term": short_term,
             "sentiment": sentiment,
             "reasons": reasons,
             "warnings": warnings,
-            "trade_plan": {
-                "entry": round(price, 3),
-                "stop_loss": round(price * (1 - self.config.stop_loss_pct), 3),
-                "take_profit": round(price * (1 + self.config.take_profit_pct), 3),
-                "position_ratio": self.config.position_ratio if action == "BUY" else 0,
-            },
+            "trade_plan": plan,
         }
         append_event("training_sample", {
             "created_at": datetime.now().isoformat(timespec="seconds"),
@@ -294,6 +300,7 @@ class QualityMomentumStrategy:
             "scores": result["scores"],
             "fundamentals": fundamentals,
             "technical": technical,
+            "short_term": short_term,
             "sentiment": sentiment,
             "trade_plan": result["trade_plan"],
             "quality_score": result["final_score"],
@@ -339,6 +346,16 @@ class QualityMomentumStrategy:
                 if order:
                     orders.append(order)
                     decisions.append({"symbol": symbol, "action": "SELL", "reason": reason})
+            elif matched and _should_add_position(account, pos, matched, current_price, pnl_pct):
+                add_order = _place_add_order(account, matched, market)
+                if add_order:
+                    orders.append(add_order)
+                    decisions.append({
+                        "symbol": symbol,
+                        "action": "ADD",
+                        "score": matched.get("scores", {}).get("short_term", matched.get("final_score")),
+                        "reason": "短线确认加仓: 盈利持仓继续放量走强，未跌破止损线",
+                    })
 
         open_symbols = set(account.positions.keys())
         buy_list = [
@@ -369,7 +386,7 @@ class QualityMomentumStrategy:
                     "reason": "涨停价附近，模拟规则禁止买入",
                 })
                 continue
-            budget = account.total_value * self.config.position_ratio
+            budget = account.total_value * float(candidate.get("trade_plan", {}).get("position_ratio") or self.config.position_ratio)
             quantity = _quantity_for_market(budget, candidate["price"], market)
             max_qty = max_order_quantity_by_volume(
                 candidate.get("volume", 0),
@@ -465,6 +482,16 @@ class QualityMomentumStrategy:
                 if order:
                     orders.append(order)
                     decisions.append({"symbol": symbol, "action": "SELL", "reason": reason})
+            elif matched and _should_add_position(account, pos, matched, current_price, pnl_pct):
+                add_order = await _aplace_add_order(account, matched, market)
+                if add_order:
+                    orders.append(add_order)
+                    decisions.append({
+                        "symbol": symbol,
+                        "action": "ADD",
+                        "score": matched.get("scores", {}).get("short_term", matched.get("final_score")),
+                        "reason": "短线确认加仓: 盈利持仓继续放量走强，未跌破止损线",
+                    })
 
         open_symbols = set(account.positions.keys())
         buy_list = [
@@ -495,7 +522,7 @@ class QualityMomentumStrategy:
                     "reason": "涨停价附近，模拟规则禁止买入",
                 })
                 continue
-            budget = account.total_value * self.config.position_ratio
+            budget = account.total_value * float(candidate.get("trade_plan", {}).get("position_ratio") or self.config.position_ratio)
             quantity = _quantity_for_market(budget, candidate["price"], market)
             max_qty = max_order_quantity_by_volume(
                 candidate.get("volume", 0),
@@ -740,6 +767,8 @@ def _technical_snapshot(hist: pd.DataFrame) -> dict[str, float | bool]:
         vol_ratio = float(volume.iloc[-1] / avg_vol) if avg_vol else 1
 
     high_20 = float(close.tail(20).max()) if len(close) >= 20 else latest
+    low_20 = float(close.tail(20).min()) if len(close) >= 20 else latest
+    high_60 = float(close.tail(60).max()) if len(close) >= 60 else high_20
     return {
         "return_20d": round(ret20, 4),
         "return_60d": round(ret60, 4),
@@ -748,7 +777,156 @@ def _technical_snapshot(hist: pd.DataFrame) -> dict[str, float | bool]:
         "above_ma20": latest > ma20,
         "ma20_above_ma60": ma20 >= ma60,
         "breakout_20d": latest >= high_20 * 0.995,
+        "breakout_60d": latest >= high_60 * 0.995,
+        "range_20d": round((high_20 / low_20 - 1) if low_20 else 0, 4),
+        "ma20": round(ma20, 3),
+        "ma60": round(ma60, 3),
     }
+
+
+def _short_term_snapshot(hist: pd.DataFrame, quote: Any, fundamentals: dict[str, float]) -> dict[str, Any]:
+    close = _series(hist, "收盘", "Close", "close")
+    volume = _series(hist, "成交量", "Volume", "volume")
+    high = _series(hist, "最高", "High", "high")
+    low = _series(hist, "最低", "Low", "low")
+
+    price = float(getattr(quote, "price", 0) or 0)
+    prev_close = float(getattr(quote, "close", 0) or 0)
+    current_volume = float(getattr(quote, "volume", 0) or 0)
+    current_high = float(getattr(quote, "high", 0) or price)
+    current_low = float(getattr(quote, "low", 0) or price)
+    market_cap = float(getattr(quote, "market_cap", 0) or 0)
+
+    components: list[dict[str, Any]] = []
+    reasons: list[str] = []
+    warnings: list[str] = []
+
+    def add(key: str, label: str, points: int, passed: bool, detail: str = "") -> None:
+        components.append({
+            "key": key,
+            "label": label,
+            "points": points,
+            "earned": points if passed else 0,
+            "passed": passed,
+            "detail": detail,
+        })
+        if passed:
+            reasons.append(f"短线加分: {label}{'，' + detail if detail else ''}")
+
+    if close.empty or price <= 0:
+        return {
+            "score": 0,
+            "components": [],
+            "reasons": [],
+            "warnings": ["短线数据不足，不能按进攻模型交易"],
+            "buy_tier": "none",
+            "initial_position_ratio": 0,
+            "add_position_ratio": 0,
+            "stop_loss": 0,
+            "take_profit": 0,
+        }
+
+    combined_close = pd.concat([close, pd.Series([price])], ignore_index=True)
+    combined_volume = pd.concat([volume, pd.Series([current_volume])], ignore_index=True) if not volume.empty else pd.Series([current_volume])
+    combined_high = pd.concat([high, pd.Series([current_high])], ignore_index=True) if not high.empty else combined_close
+    combined_low = pd.concat([low, pd.Series([current_low])], ignore_index=True) if not low.empty else combined_close
+
+    pct = combined_close.pct_change().fillna(0)
+    recent_returns = pct.tail(30)
+    limit_up_pct = 0.195 if str(getattr(quote, "symbol", "")).startswith(("300", "301", "688")) else 0.095
+    limit_mask = recent_returns >= limit_up_pct
+    has_limit_up = bool(limit_mask.any())
+    limit_indices = list(limit_mask[limit_mask].index)
+    limit_idx = int(limit_indices[-1]) if limit_indices else None
+    limit_low = float(combined_low.iloc[limit_idx]) if limit_idx is not None and limit_idx < len(combined_low) else 0
+    held_limit_low = bool(limit_low and price >= limit_low)
+
+    avg_vol_30 = float(combined_volume.tail(31).iloc[:-1].mean()) if len(combined_volume) >= 31 else float(combined_volume.mean() or 0)
+    max_recent_vol_ratio = float((combined_volume.tail(30) / avg_vol_30).max()) if avg_vol_30 else 0
+    has_double_volume = max_recent_vol_ratio >= 2
+
+    high_20_prev = float(combined_high.iloc[:-1].tail(20).max()) if len(combined_high) > 1 else price
+    high_60_prev = float(combined_high.iloc[:-1].tail(60).max()) if len(combined_high) > 1 else price
+    low_20_prev = float(combined_low.iloc[:-1].tail(20).min()) if len(combined_low) > 1 else price
+    range_20 = (high_20_prev / low_20_prev - 1) if low_20_prev else 0
+    breakout = price >= high_20_prev * 0.995 or price >= high_60_prev * 0.99
+    sideways_breakout = range_20 <= 0.18 and breakout
+
+    ma5 = float(combined_close.tail(5).mean())
+    ma10 = float(combined_close.tail(10).mean()) if len(combined_close) >= 10 else ma5
+    pullback_volume = False
+    if len(combined_close) >= 8 and len(combined_volume) >= 8:
+        last_3_ret = combined_close.iloc[-1] / combined_close.iloc[-4] - 1 if combined_close.iloc[-4] else 0
+        vol_3 = float(combined_volume.tail(3).mean())
+        vol_10 = float(combined_volume.tail(10).mean()) if len(combined_volume) >= 10 else vol_3
+        pullback_volume = -0.08 <= last_3_ret <= 0.03 and vol_3 <= vol_10 * 0.85 and price >= ma10 * 0.98
+
+    latest_ret = (price / prev_close - 1) if prev_close else 0
+    rel_strength = _short_market_resilience(combined_close)
+    close_position = (price - current_low) / (current_high - current_low) if current_high > current_low else 1
+    stand_key_level = price >= max(ma5, ma10) and close_position >= 0.55
+
+    small_cap = 0 < market_cap <= 100
+    if market_cap <= 0:
+        pb = fundamentals.get("pb", 0)
+        small_cap = 0 < pb <= 8 and price < 80
+        warnings.append("市值字段缺失，小市值项用估值/价格作弱替代")
+
+    add("limit_up_30d", "30 天内有涨停", 15, has_limit_up)
+    add("double_volume_30d", "30 天内有倍量", 10, has_double_volume, f"最高量比 {max_recent_vol_ratio:.1f}x" if max_recent_vol_ratio else "")
+    add("small_cap", "市值 100 亿以内", 10, small_cap, f"市值 {market_cap:.1f} 亿" if market_cap else "")
+    add("hold_limit_low", "涨停后未跌破涨停日最低价", 15, has_limit_up and held_limit_low)
+    add("breakout", "横盘突破或突破前高", 15, breakout or sideways_breakout)
+    add("market_resilience", "大盘跌它不跌", 15, rel_strength)
+    add("pullback_absorption", "回调缩量、有承接", 10, pullback_volume)
+    add("late_key_level", "下午 2 点后仍站稳关键位", 10, stand_key_level)
+
+    score = sum(item["earned"] for item in components)
+    if latest_ret >= limit_up_pct:
+        warnings.append("当前接近涨停，模型只允许观察，不追涨买入")
+    if close_position < 0.35:
+        warnings.append("当前价格接近日内低位，承接不足")
+
+    buy_tier = "watch"
+    initial_ratio = 0.0
+    add_ratio = 0.0
+    if score >= 90:
+        buy_tier = "aggressive"
+        initial_ratio = 0.30
+        add_ratio = 0.20
+    elif score >= 80:
+        buy_tier = "pilot"
+        initial_ratio = 0.22
+        add_ratio = 0.15
+    elif score >= 70:
+        buy_tier = "watch"
+        initial_ratio = 0.0
+
+    stop_base = limit_low if limit_low and held_limit_low else min(ma10, price * 0.94)
+    stop_loss = min(price * 0.94, stop_base * 0.995) if stop_base > 0 else price * 0.94
+    take_profit = price * (1.12 if buy_tier == "pilot" else 1.18 if buy_tier == "aggressive" else 1.10)
+
+    return {
+        "score": round(float(score), 1),
+        "components": components,
+        "reasons": reasons,
+        "warnings": warnings,
+        "buy_tier": buy_tier,
+        "initial_position_ratio": initial_ratio,
+        "add_position_ratio": add_ratio,
+        "stop_loss": round(stop_loss, 3),
+        "take_profit": round(take_profit, 3),
+        "key_level": round(max(ma5, ma10), 3),
+        "close_position": round(close_position, 3),
+    }
+
+
+def _short_market_resilience(close: pd.Series) -> bool:
+    if close is None or len(close) < 8:
+        return False
+    ret_5 = close.iloc[-1] / close.iloc[-6] - 1 if close.iloc[-6] else 0
+    drawdown_5 = close.iloc[-1] / close.tail(6).max() - 1 if close.tail(6).max() else 0
+    return ret_5 >= -0.015 and drawdown_5 >= -0.05
 
 
 def _sentiment_snapshot(news_items: list[Any]) -> dict[str, Any]:
@@ -889,9 +1067,17 @@ def _risk_level(score: float) -> str:
     return "low"
 
 
-def _action_from_score(score: float, risk_level: str, momentum: float, sentiment: float) -> str:
+def _action_from_score(
+    score: float,
+    risk_level: str,
+    momentum: float,
+    sentiment: float,
+    short_term_score: float = 0,
+) -> str:
     if risk_level == "extreme":
         return "NO_ACTION"
+    if short_term_score >= 80 and risk_level in ("low", "medium", "high"):
+        return "BUY"
     if score >= 72 and momentum >= 58 and sentiment >= 42:
         return "BUY"
     if score >= 60:
@@ -899,6 +1085,39 @@ def _action_from_score(score: float, risk_level: str, momentum: float, sentiment
     if score <= 42:
         return "AVOID"
     return "HOLD"
+
+
+def _trade_plan(price: float, action: str, config: StrategyConfig, short_term: dict[str, Any]) -> dict[str, Any]:
+    if action != "BUY":
+        return {
+            "entry": round(price, 3),
+            "stop_loss": round(price * (1 - config.stop_loss_pct), 3),
+            "take_profit": round(price * (1 + config.take_profit_pct), 3),
+            "position_ratio": 0,
+            "entry_mode": "none",
+        }
+
+    short_score = float(short_term.get("score", 0) or 0)
+    if short_score >= 80:
+        initial_ratio = float(short_term.get("initial_position_ratio") or 0.22)
+        position_ratio = min(config.position_ratio, initial_ratio * config.position_ratio / 0.30)
+        return {
+            "entry": round(price, 3),
+            "stop_loss": round(float(short_term.get("stop_loss") or price * 0.94), 3),
+            "take_profit": round(float(short_term.get("take_profit") or price * 1.15), 3),
+            "position_ratio": round(position_ratio, 4),
+            "entry_mode": short_term.get("buy_tier", "pilot"),
+            "add_position_ratio": round(float(short_term.get("add_position_ratio") or 0), 4),
+            "add_condition": "放量突破关键位且不跌破首次买入止损线",
+        }
+
+    return {
+        "entry": round(price, 3),
+        "stop_loss": round(price * (1 - config.stop_loss_pct), 3),
+        "take_profit": round(price * (1 + config.take_profit_pct), 3),
+        "position_ratio": config.position_ratio,
+        "entry_mode": "quality_momentum",
+    }
 
 
 def _explain(
@@ -946,6 +1165,96 @@ def _sell_reason(pnl_pct: float, matched: dict[str, Any] | None) -> str:
     if matched and matched["scores"]["sentiment"] < 35:
         return "自动卖出: 舆情明显转弱"
     return "自动卖出: 综合评分跌破持仓阈值"
+
+
+def _should_add_position(
+    account: VirtualAccount,
+    position: dict[str, Any],
+    matched: dict[str, Any],
+    current_price: float,
+    pnl_pct: float,
+) -> bool:
+    """Allow only rule-confirmed add-on buys for existing winners."""
+    if current_price <= 0 or pnl_pct < 0.015:
+        return False
+
+    short_score = float(matched.get("scores", {}).get("short_term", 0) or 0)
+    trade_plan = matched.get("trade_plan") or {}
+    short_term = matched.get("short_term") or {}
+    add_ratio = float(trade_plan.get("add_position_ratio") or short_term.get("add_position_ratio") or 0)
+    if short_score < 80 or add_ratio <= 0:
+        return False
+
+    stop_loss = float(trade_plan.get("stop_loss") or short_term.get("stop_loss") or 0)
+    if stop_loss > 0 and current_price <= stop_loss:
+        return False
+
+    key_level = float(short_term.get("key_level") or 0)
+    if key_level > 0 and current_price < key_level:
+        return False
+
+    current_qty = int(position.get("quantity", 0) or 0)
+    current_value = current_qty * current_price
+    max_position_ratio = min(0.45, float(matched.get("trade_plan", {}).get("position_ratio") or 0) + add_ratio)
+    if account.total_value > 0 and current_value / account.total_value >= max_position_ratio:
+        return False
+
+    return True
+
+
+def _place_add_order(account: VirtualAccount, candidate: dict[str, Any], market: str) -> dict[str, Any] | None:
+    price = float(candidate.get("price") or 0)
+    if price <= 0:
+        return None
+    if is_suspended_or_untradable(price, candidate.get("volume", 0), candidate.get("amount", 0)):
+        return None
+    if not can_buy_at_price(market, candidate["symbol"], price, candidate.get("prev_close", 0), candidate.get("name", "")):
+        return None
+
+    add_ratio = float(candidate.get("trade_plan", {}).get("add_position_ratio") or 0)
+    if add_ratio <= 0:
+        return None
+    budget = min(account.cash, account.total_value * add_ratio)
+    quantity = _quantity_for_market(budget, price, market)
+    max_qty = max_order_quantity_by_volume(candidate.get("volume", 0), settings.max_volume_participation_pct, market)
+    if market == "a_stock" and max_qty <= 0:
+        return None
+    if max_qty > 0:
+        quantity = min(quantity, max_qty)
+    if quantity <= 0:
+        return None
+
+    reason = "短线自动加仓: 评分维持 80+，盈利持仓放量走强且站稳关键位"
+    order = account.buy(candidate["symbol"], candidate["name"], price, quantity, reason, market=market)
+    if order and candidate["symbol"] in account.positions:
+        account.positions[candidate["symbol"]]["market"] = market
+    return order
+
+
+async def _aplace_add_order(account: VirtualAccount, candidate: dict[str, Any], market: str) -> dict[str, Any] | None:
+    price = float(candidate.get("price") or 0)
+    if price <= 0:
+        return None
+    if is_suspended_or_untradable(price, candidate.get("volume", 0), candidate.get("amount", 0)):
+        return None
+    if not can_buy_at_price(market, candidate["symbol"], price, candidate.get("prev_close", 0), candidate.get("name", "")):
+        return None
+
+    add_ratio = float(candidate.get("trade_plan", {}).get("add_position_ratio") or 0)
+    if add_ratio <= 0:
+        return None
+    budget = min(account.cash, account.total_value * add_ratio)
+    quantity = _quantity_for_market(budget, price, market)
+    max_qty = max_order_quantity_by_volume(candidate.get("volume", 0), settings.max_volume_participation_pct, market)
+    if market == "a_stock" and max_qty <= 0:
+        return None
+    if max_qty > 0:
+        quantity = min(quantity, max_qty)
+    if quantity <= 0:
+        return None
+
+    reason = "短线自动加仓: 评分维持 80+，盈利持仓放量走强且站稳关键位"
+    return await account.abuy(candidate["symbol"], candidate["name"], price, quantity, market=market, reason=reason)
 
 
 def _review_snapshot(account: VirtualAccount, config: StrategyConfig) -> dict[str, Any]:

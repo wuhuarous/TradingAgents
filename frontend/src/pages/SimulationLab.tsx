@@ -14,6 +14,7 @@ const SCORE_KEYS = [
   { key: 'valuation', label: '估值' },
   { key: 'momentum', label: '行情' },
   { key: 'sentiment', label: '情绪' },
+  { key: 'short_term', label: '短线' },
   { key: 'risk', label: '风险' },
 ];
 
@@ -337,7 +338,33 @@ export default function SimulationLab() {
                     <span>止盈位</span>
                     <strong>{selected.trade_plan?.take_profit?.toFixed?.(2) || '-'}</strong>
                   </div>
+                  <div>
+                    <span>买入模式</span>
+                    <strong>{entryModeLabel(selected.trade_plan?.entry_mode)}</strong>
+                  </div>
+                  <div>
+                    <span>计划仓位</span>
+                    <strong>{formatPct(selected.trade_plan?.position_ratio || 0)}</strong>
+                  </div>
                 </div>
+
+                {selected.short_term?.components?.length > 0 && (
+                  <div className="short-score-panel">
+                    <div className="agent-label">短线 100 分模型</div>
+                    <div className="short-score-head">
+                      <strong>{Number(selected.short_term.score || 0).toFixed(0)}</strong>
+                      <span>{shortTierLabel(selected.short_term.buy_tier)}</span>
+                    </div>
+                    <div className="short-score-list">
+                      {selected.short_term.components.map((item: any) => (
+                        <div className={`short-score-row ${item.passed ? 'passed' : ''}`} key={item.key}>
+                          <span>{item.label}</span>
+                          <b>{item.earned}/{item.points}</b>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
 
                 <div className="evidence-grid">
                   <div>
@@ -513,6 +540,26 @@ function riskLabel(level: string) {
     unknown: '未知',
   };
   return map[level] || level;
+}
+
+function entryModeLabel(mode?: string) {
+  const map: Record<string, string> = {
+    pilot: '短线试仓',
+    aggressive: '短线进攻',
+    quality_momentum: '质量动量',
+    none: '不买入',
+  };
+  return map[mode || 'none'] || mode || '不买入';
+}
+
+function shortTierLabel(tier?: string) {
+  const map: Record<string, string> = {
+    aggressive: '进攻池',
+    pilot: '观察池',
+    watch: '观察',
+    none: '未入池',
+  };
+  return map[tier || 'none'] || tier || '未入池';
 }
 
 function marketLabel(market: string) {
