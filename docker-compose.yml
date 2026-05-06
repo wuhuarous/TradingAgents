@@ -47,21 +47,6 @@ services:
       timeout: 3s
       retries: 5
     restart: unless-stopped
-
-  clickhouse:
-    image: clickhouse/clickhouse-server:24-alpine
-    ports:
-      - "8123:8123"
-      - "9000:9000"
-    volumes:
-      - chdata:/var/lib/clickhouse
-    healthcheck:
-      test: ["CMD", "clickhouse-client", "--query", "SELECT 1"]
-      interval: 5s
-      timeout: 3s
-      retries: 5
-    restart: unless-stopped
-
 volumes:
   pgdata:
   chdata:
