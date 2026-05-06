@@ -271,7 +271,7 @@ flowchart LR
 
 本项目在架构设计和量化方法论上深受以下开源项目启发：
 
-- **[TradingAgents-CN](https://github.com/sahb321/TradingAgents-CN)** — 多智能体交易框架，提供了 Agent 分层架构（分析师 → 研究员 → 交易员 → 风控 → 组合经理）、新闻增强过滤、多模型供应商配置等设计参考。
+- **[TradingAgents](https://github.com/TauricResearch/TradingAgents)** — 多智能体交易框架，提供了 Agent 分层架构（分析师 → 研究员 → 交易员 → 风控 → 组合经理）设计参考。
 - **[Qlib](https://github.com/microsoft/qlib)** — 微软开源的 AI 量化研究平台，提供了因子框架（Alpha158/Alpha360）、实验管理、回测引擎和专业绩效评估体系。
 
 详见 [docs/REFERENCE_PROJECT_BORROWING.md](docs/REFERENCE_PROJECT_BORROWING.md)。
