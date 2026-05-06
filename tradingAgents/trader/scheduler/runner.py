@@ -1,77 +1,151 @@
-"""调度器运行器 — 轻量任务调度"""
-from datetime import datetime
-from typing import Callable, Optional
+"""调度器运行器 — APScheduler 集成自动交易"""
+import logging
+from typing import Optional
 
+from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.cron import CronTrigger
+from apscheduler.jobstores.memory import MemoryJobStore
+
+from tradingAgents.config.settings import settings
+from tradingAgents.data.universe import get_universe_symbols
 from tradingAgents.trader.scheduler.jobs import (
     intraday_monitoring_job,
     market_close_settlement_job,
     market_open_trading_job,
     pre_market_analysis_job,
+    review_backfill_job,
+    simulation_auto_cycle_job,
 )
+from tradingAgents.data.database.market_sync import sync_market_quotes, sync_kline_daily
+
+logger = logging.getLogger(__name__)
+
+
+def _sync_watchlist_klines():
+    for sym in get_universe_symbols("a_stock", role="kline_sync"):
+        try:
+            sync_kline_daily(sym)
+        except Exception:
+            pass
 
 
 class TradingScheduler:
-    """轻量调度器 — 管理定时任务注册与手动触发"""
+    """基于 APScheduler 的自动交易调度器"""
+
+    _instance: Optional["TradingScheduler"] = None
+
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+            cls._instance._initialized = False
+        return cls._instance
 
     def __init__(self):
-        self._jobs: dict[str, dict] = {}
-        self._running = False
-        self._register_jobs()
+        if self._initialized:
+            return
+        self._initialized = True
 
-    def _register_jobs(self):
-        self.add_job(
-            "pre_market_analysis",
-            "pre_market_analysis",
-            pre_market_analysis_job,
-            cron="0 8 * * mon-fri",
+        job_stores = {"default": MemoryJobStore()}
+        self._scheduler = BackgroundScheduler(
+            jobstores=job_stores,
+            timezone="Asia/Shanghai",
+            job_defaults={"coalesce": True, "max_instances": 1},
         )
-        self.add_job(
-            "market_open_trading",
-            "market_open_trading",
-            market_open_trading_job,
-            cron="30 9 * * mon-fri",
-        )
-        self.add_job(
-            "intraday_monitoring",
-            "intraday_monitoring",
-            intraday_monitoring_job,
-            cron="*/5 9-15 * * mon-fri",
-        )
-        self.add_job(
-            "market_close_settlement",
-            "market_close_settlement",
-            market_close_settlement_job,
-            cron="0 15 * * mon-fri",
-        )
+        self._jobs_config = self._build_jobs()
 
-    def add_job(self, job_id: str, name: str, func: Callable, cron: str = ""):
-        self._jobs[job_id] = {
-            "id": job_id,
-            "name": name,
-            "func": func,
-            "cron": cron,
-            "next_run": None,
-        }
+    def _build_jobs(self) -> list[dict]:
+        return [
+            {
+                "id": "pre_market_analysis",
+                "name": "盘前分析",
+                "func": pre_market_analysis_job,
+                "cron": f"{settings.pre_market_analysis_time.split(':')[1]} {settings.pre_market_analysis_time.split(':')[0]} * * mon-fri",
+            },
+            {
+                "id": "market_open_trading",
+                "name": "开盘交易",
+                "func": market_open_trading_job,
+                "cron": f"30 9 * * mon-fri",
+            },
+            {
+                "id": "intraday_monitoring",
+                "name": "盘中监控",
+                "func": intraday_monitoring_job,
+                "cron": "*/5 9-15 * * mon-fri",
+            },
+            {
+                "id": "simulation_auto_cycle",
+                "name": "模拟自动交易",
+                "func": simulation_auto_cycle_job,
+                "cron": "*/30 9-14 * * mon-fri",
+            },
+            {
+                "id": "market_close_settlement",
+                "name": "收盘结算",
+                "func": market_close_settlement_job,
+                "cron": "0 15 * * mon-fri",
+            },
+            {
+                "id": "market_quote_sync",
+                "name": "行情数据同步",
+                "func": sync_market_quotes,
+                "cron": "*/1 9-15 * * mon-fri",
+            },
+            {
+                "id": "kline_daily_sync",
+                "name": "日K线同步",
+                "func": _sync_watchlist_klines,
+                "cron": "30 15 * * mon-fri",
+            },
+            {
+                "id": "review_backfill",
+                "name": "复盘收益回填",
+                "func": review_backfill_job,
+                "cron": "45 15 * * mon-fri",
+            },
+        ]
 
     def start(self):
-        self._running = True
+        for job_cfg in self._jobs_config:
+            self._scheduler.add_job(
+                func=job_cfg["func"],
+                trigger=CronTrigger.from_crontab(job_cfg["cron"]),
+                id=job_cfg["id"],
+                name=job_cfg["name"],
+                replace_existing=True,
+            )
+        self._scheduler.start()
+        logger.info("TradingScheduler started with %d jobs", len(self._jobs_config))
 
     def stop(self):
-        self._running = False
+        if self._scheduler.running:
+            self._scheduler.shutdown(wait=False)
+            logger.info("TradingScheduler stopped")
 
     @property
     def running(self) -> bool:
-        return self._running
+        return self._scheduler.running
 
     def list_jobs(self) -> list[dict]:
-        return [
-            {"id": j["id"], "name": j["name"], "cron": j["cron"]}
-            for j in self._jobs.values()
-        ]
+        if self._scheduler.running:
+            jobs = self._scheduler.get_jobs()
+            return [
+                {
+                    "id": j.id,
+                    "name": j.name,
+                    "cron": str(j.trigger) if j.trigger else "manual",
+                    "next_run": j.next_run_time.isoformat() if j.next_run_time else None,
+                }
+                for j in jobs
+            ]
+        return [{"id": j["id"], "name": j["name"], "cron": j["cron"], "next_run": None} for j in self._jobs_config]
 
     def run_job(self, job_id: str) -> Optional[dict]:
-        """手动触发单个任务"""
-        job = self._jobs.get(job_id)
-        if job:
-            return job["func"]()
+        for job_cfg in self._jobs_config:
+            if job_cfg["id"] == job_id:
+                try:
+                    return job_cfg["func"]()
+                except Exception as e:
+                    logger.error("Job %s failed: %s", job_id, e)
+                    return {"error": str(e)}
         return None

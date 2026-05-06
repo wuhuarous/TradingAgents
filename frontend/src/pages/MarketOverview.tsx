@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { api } from '../api/client';
+import ResearchWorkflow from '../components/ResearchWorkflow';
 
 const MARKETS = [
   { key: 'a_stock', label: 'A股' },
@@ -7,18 +9,68 @@ const MARKETS = [
   { key: 'us_stock', label: '美股' },
 ];
 
+const CURRENCY: Record<string, string> = {
+  a_stock: '¥',
+  hk_stock: 'HK$',
+  us_stock: '$',
+};
+
+function fmtPct(value: number | null | undefined) {
+  if (value == null || Number.isNaN(Number(value))) return '--';
+  return `${value >= 0 ? '+' : ''}${(value * 100).toFixed(2)}%`;
+}
+
+function fmtPrice(value: number | null | undefined, market: string) {
+  if (value == null || Number.isNaN(Number(value))) return '--';
+  return `${CURRENCY[market] || ''}${Number(value).toFixed(2)}`;
+}
+
 export default function MarketOverview() {
   const [market, setMarket] = useState('a_stock');
   const [data, setData] = useState<any>(null);
+  const [rankings, setRankings] = useState<any>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     setLoading(true);
     setData(null);
-    api.getMarketOverview(market)
-      .then(setData)
-      .catch(() => {})
-      .finally(() => setLoading(false));
+    api.getSimulationRankings(10).then(setRankings).catch(() => {});
+
+    const apiBase = import.meta.env.VITE_API_BASE || '/api';
+    const wsBase = apiBase.startsWith('http')
+      ? apiBase.replace(/^http/, 'ws').replace(/\/api\/?$/, '')
+      : `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.hostname}:8000`;
+    const wsUrl = `${wsBase}/api/market/ws/${market}`;
+    const ws = new WebSocket(wsUrl);
+    let settled = false;
+
+    ws.onmessage = (event) => {
+      setData(JSON.parse(event.data));
+      setLoading(false);
+      settled = true;
+    };
+    ws.onerror = () => {
+      if (!settled) {
+        api.getMarketOverview(market)
+          .then(setData)
+          .catch(() => {})
+          .finally(() => setLoading(false));
+      }
+    };
+
+    const timer = window.setTimeout(() => {
+      if (!settled) {
+        api.getMarketOverview(market)
+          .then(setData)
+          .catch(() => {})
+          .finally(() => setLoading(false));
+      }
+    }, 3500);
+
+    return () => {
+      window.clearTimeout(timer);
+      ws.close();
+    };
   }, [market]);
 
   return (
@@ -27,6 +79,8 @@ export default function MarketOverview() {
         <h1>行情总览</h1>
         <p>实时指数 · 热门标的 · 涨跌排名</p>
       </header>
+
+      <ResearchWorkflow active="market" />
 
       <div className="market-tabs">
         {MARKETS.map((m) => (
@@ -54,6 +108,27 @@ export default function MarketOverview() {
         </div>
       ) : (
         <>
+          <section className="market-pulse-grid">
+            {MARKETS.map((m) => {
+              const summary = rankings?.markets?.find((item: any) => item.market === m.key);
+              const avg = summary?.avg_score || 0;
+              const leaders = summary?.buy_signals || 0;
+              return (
+                <button
+                  className={`market-pulse-card ${market === m.key ? 'active' : ''}`}
+                  key={m.key}
+                  onClick={() => setMarket(m.key)}
+                >
+                  <span>{m.label}</span>
+                  <strong className={avg >= 0 ? 'gain' : 'loss'}>
+                    {avg ? avg.toFixed(1) : '--'}
+                  </strong>
+                  <p>{leaders} 个模拟买入信号</p>
+                </button>
+              );
+            })}
+          </section>
+
           {/* Indices */}
           {data.indices && data.indices.length > 0 && (
             <div className="indices-row" style={{
@@ -69,7 +144,7 @@ export default function MarketOverview() {
                     {idx.price?.toLocaleString(undefined, { maximumFractionDigits: 2 })}
                   </div>
                   <div className={`metric-sub ${idx.change_pct >= 0 ? 'gain' : 'loss'}`}>
-                    {idx.change_pct >= 0 ? '↑' : '↓'} {idx.change_pct?.toFixed(2)}%
+                    {idx.change_pct >= 0 ? '↑' : '↓'} {fmtPct(idx.change_pct)}
                   </div>
                 </div>
               ))}
@@ -91,10 +166,14 @@ export default function MarketOverview() {
                   <tbody>
                     {data.top_gainers.map((s: any) => (
                       <tr key={s.symbol}>
-                        <td className="mono" style={{ fontWeight: 600 }}>{s.symbol}</td>
+                        <td className="mono" style={{ fontWeight: 600 }}>
+                          <Link to={`/stock?symbol=${s.symbol}&market=${market}`} style={{ color: 'var(--amber)', textDecoration: 'none' }}>
+                            {s.symbol}
+                          </Link>
+                        </td>
                         <td>{s.name}</td>
-                        <td className="mono">¥{s.price?.toFixed(2)}</td>
-                        <td className="gain">{s.change_pct?.toFixed(2)}%</td>
+                        <td className="mono">{fmtPrice(s.price, market)}</td>
+                        <td className="gain">{fmtPct(s.change_pct)}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -120,10 +199,14 @@ export default function MarketOverview() {
                   <tbody>
                     {data.top_losers.map((s: any) => (
                       <tr key={s.symbol}>
-                        <td className="mono" style={{ fontWeight: 600 }}>{s.symbol}</td>
+                        <td className="mono" style={{ fontWeight: 600 }}>
+                          <Link to={`/stock?symbol=${s.symbol}&market=${market}`} style={{ color: 'var(--amber)', textDecoration: 'none' }}>
+                            {s.symbol}
+                          </Link>
+                        </td>
                         <td>{s.name}</td>
-                        <td className="mono">¥{s.price?.toFixed(2)}</td>
-                        <td className="loss">{s.change_pct?.toFixed(2)}%</td>
+                        <td className="mono">{fmtPrice(s.price, market)}</td>
+                        <td className="loss">{fmtPct(s.change_pct)}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -135,6 +218,33 @@ export default function MarketOverview() {
               )}
             </section>
           </div>
+
+          {rankings && (
+            <section className="section" style={{ marginTop: 'var(--space-8)' }}>
+              <div className="section-header">
+                <h2>全市场强势候选</h2>
+                <span className="section-badge">质量 + 潜力</span>
+              </div>
+              <div className="market-leader-grid">
+                {(rankings.all || []).slice(0, 12).map((item: any) => (
+                  <Link
+                    className="leader-card"
+                    key={`${item.market}-${item.symbol}`}
+                    to={`/analysis?symbol=${encodeURIComponent(item.symbol)}&market=${item.market}`}
+                  >
+                    <div>
+                      <strong>{item.symbol}</strong>
+                      <p>{item.name}</p>
+                    </div>
+                    <span className={`action-pill ${String(item.action).toLowerCase()}`}>
+                      {item.action === 'BUY' ? '买入' : item.action === 'WATCH' ? '观察' : item.action}
+                    </span>
+                    <b>{item.final_score}</b>
+                  </Link>
+                ))}
+              </div>
+            </section>
+          )}
 
           {/* All Hot Stocks */}
           <section className="section" style={{ marginTop: 'var(--space-8)' }}>
@@ -150,11 +260,15 @@ export default function MarketOverview() {
                 <tbody>
                   {data.hot_stocks.map((s: any) => (
                     <tr key={s.symbol}>
-                      <td className="mono" style={{ fontWeight: 600 }}>{s.symbol}</td>
+                      <td className="mono" style={{ fontWeight: 600 }}>
+                        <Link to={`/stock?symbol=${s.symbol}&market=${market}`} style={{ color: 'var(--amber)', textDecoration: 'none' }}>
+                          {s.symbol}
+                        </Link>
+                      </td>
                       <td>{s.name}</td>
-                      <td className="mono">¥{s.price?.toFixed(2)}</td>
+                      <td className="mono">{fmtPrice(s.price, market)}</td>
                       <td className={`mono ${s.change_pct >= 0 ? 'gain' : 'loss'}`}>
-                        {s.change_pct >= 0 ? '+' : ''}{s.change_pct?.toFixed(2)}%
+                        {fmtPct(s.change_pct)}
                       </td>
                       <td className="mono">{s.volume?.toLocaleString()}</td>
                     </tr>

@@ -3,6 +3,8 @@ from typing import Optional
 from pydantic import BaseModel, Field
 
 
+# ---- Market / Screener / News / Settings (unchanged) ----
+
 class StockQuoteResponse(BaseModel):
     symbol: str
     name: str
@@ -55,7 +57,42 @@ class SettingsUpdate(BaseModel):
     anthropic_api_key: Optional[str] = None
     deep_think_model: Optional[str] = None
     quick_think_model: Optional[str] = None
+    preferred_market_data_source: Optional[str] = None
+    preferred_news_source: Optional[str] = None
+    tushare_token: Optional[str] = None
+    alpha_vantage_api_key: Optional[str] = None
+    finnhub_api_key: Optional[str] = None
+    polygon_api_key: Optional[str] = None
+    newsapi_api_key: Optional[str] = None
+    tavily_api_key: Optional[str] = None
     initial_capital: Optional[float] = None
     single_position_max_ratio: Optional[float] = None
     total_position_max_ratio: Optional[float] = None
     daily_stop_loss_ratio: Optional[float] = None
+
+
+# ---- Stock Detail ----
+
+class KlinePoint(BaseModel):
+    date: str
+    open: float
+    high: float
+    low: float
+    close: float
+    volume: int
+
+
+class StockDetailResponse(BaseModel):
+    symbol: str
+    name: str
+    market: str
+    price: float
+    change_pct: float
+    open: float
+    high: float
+    low: float
+    close: float  # previous close
+    volume: int
+    kline: list[KlinePoint]
+    fundamentals: dict
+    financials: dict

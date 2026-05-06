@@ -1,9 +1,20 @@
 """Tests for virtual account, position/order managers, and strategy"""
+from datetime import datetime, timedelta
+
 import pytest
 from tradingAgents.trader.account import VirtualAccount
 from tradingAgents.trader.position import PositionManager
 from tradingAgents.trader.order import OrderManager, OrderStatus
 from tradingAgents.trader.strategy import StrategyEngine
+from tradingAgents.trader.trade_rules import compute_trade_costs
+
+
+def make_buy_orders_previous_day(acc: VirtualAccount) -> None:
+    for order in acc.orders:
+        if order.get("action") == "buy":
+            order["timestamp"] = (datetime.now() - timedelta(days=1)).isoformat()
+    for symbol in list(acc.positions.keys()):
+        acc.positions[symbol]["available_quantity"] = acc._available_sell_quantity(symbol)
 
 
 class TestVirtualAccount:
@@ -43,7 +54,8 @@ class TestVirtualAccount:
         order = acc.buy("000001", "平安银行", 10.0, 1000, "测试买入")
         assert order is not None
         assert order["action"] == "buy"
-        assert acc.cash == 90000
+        costs = compute_trade_costs("buy", "a_stock", 10.0, 1000)
+        assert acc.cash == pytest.approx(100000 + costs.cash_delta)
         assert "000001" in acc.positions
         assert acc.positions["000001"]["quantity"] == 1000
 
@@ -52,7 +64,9 @@ class TestVirtualAccount:
         acc.buy("000001", "平安", 10.0, 1000, "")
         acc.buy("000001", "平安", 12.0, 500, "")
         assert acc.positions["000001"]["quantity"] == 1500
-        assert acc.positions["000001"]["avg_cost"] == pytest.approx((10*1000 + 12*500) / 1500)
+        c1 = compute_trade_costs("buy", "a_stock", 10.0, 1000)
+        c2 = compute_trade_costs("buy", "a_stock", 12.0, 500)
+        assert acc.positions["000001"]["avg_cost"] == pytest.approx((abs(c1.cash_delta) + abs(c2.cash_delta)) / 1500)
 
     def test_buy_insufficient_cash_returns_none(self):
         acc = VirtualAccount(initial_capital=1000)
@@ -62,17 +76,27 @@ class TestVirtualAccount:
     def test_sell_updates_cash_and_positions(self):
         acc = VirtualAccount(initial_capital=100000)
         acc.buy("000001", "平安银行", 10.0, 1000, "")
+        make_buy_orders_previous_day(acc)
         order = acc.sell("000001", 12.0, 500, "测试卖出")
         assert order is not None
         assert order["action"] == "sell"
-        assert order["revenue"] == 6000
+        costs = compute_trade_costs("sell", "a_stock", 12.0, 500)
+        assert order["revenue"] == pytest.approx(costs.cash_delta)
         assert acc.positions["000001"]["quantity"] == 500
 
     def test_sell_removes_zero_position(self):
         acc = VirtualAccount(initial_capital=100000)
         acc.buy("000001", "平安", 10.0, 1000, "")
+        make_buy_orders_previous_day(acc)
         acc.sell("000001", 12.0, 1000, "")
         assert "000001" not in acc.positions
+
+    def test_a_share_t1_blocks_same_day_sell(self):
+        acc = VirtualAccount(initial_capital=100000)
+        acc.buy("000001", "平安", 10.0, 1000, "")
+        order = acc.sell("000001", 12.0, 1000, "")
+        assert order is None
+        assert acc.positions["000001"]["available_quantity"] == 0
 
     def test_sell_unknown_symbol_returns_none(self):
         acc = VirtualAccount(initial_capital=100000)
@@ -85,7 +109,7 @@ class TestVirtualAccount:
         summary = acc.get_position_summary()
         assert len(summary) == 1
         assert summary[0]["symbol"] == "000001"
-        assert summary[0]["pnl_pct"] == 0.0
+        assert summary[0]["pnl_pct"] < 0
 
     def test_to_dict(self):
         acc = VirtualAccount(initial_capital=50000)
@@ -98,6 +122,7 @@ class TestVirtualAccount:
     def test_orders_tracked(self):
         acc = VirtualAccount(initial_capital=100000)
         acc.buy("000001", "平安", 10.0, 1000, "reason1")
+        make_buy_orders_previous_day(acc)
         acc.sell("000001", 12.0, 500, "reason2")
         assert len(acc.orders) == 2
         assert len(acc.trade_log) == 2

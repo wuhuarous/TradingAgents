@@ -1,6 +1,7 @@
-import { useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { api } from '../api/client';
+import ResearchWorkflow from '../components/ResearchWorkflow';
 
 const MARKETS = [
   { key: 'a_stock', label: 'A股' },
@@ -10,11 +11,17 @@ const MARKETS = [
 
 export default function AnalysisDetail() {
   const { symbol: routeSymbol } = useParams<{ symbol?: string }>();
-  const [symbol, setSymbol] = useState(routeSymbol || '');
-  const [market, setMarket] = useState('a_stock');
+  const [searchParams] = useSearchParams();
+  const [symbol, setSymbol] = useState(routeSymbol || searchParams.get('symbol') || '');
+  const [market, setMarket] = useState(searchParams.get('market') || 'a_stock');
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<any>(null);
   const [error, setError] = useState('');
+  const [rankings, setRankings] = useState<any>(null);
+
+  useEffect(() => {
+    api.getSimulationRankings(8).then(setRankings).catch(() => {});
+  }, []);
 
   const runAnalysis = async () => {
     if (!symbol.trim()) return;
@@ -41,9 +48,11 @@ export default function AnalysisDetail() {
         <p>10 智能体协作链路 · 市场分析 → 辩论 → 风险评估 → 交易决策</p>
       </header>
 
+      <ResearchWorkflow active="analysis" />
+
       {/* Search bar */}
-      <div style={{
-        display: 'flex', gap: 'var(--space-3)', marginBottom: 'var(--space-8)',
+      <div className="analysis-searchbar" style={{
+        display: 'flex', gap: 'var(--space-3)', marginBottom: 'var(--space-6)',
         alignItems: 'flex-end',
       }}>
         <div className="filter-group" style={{ flex: 1, maxWidth: 200 }}>
@@ -79,6 +88,37 @@ export default function AnalysisDetail() {
         </button>
       </div>
 
+      {rankings && (
+        <section className="analysis-pick-strip">
+          <div className="section-header">
+            <h2>推荐深度分析对象</h2>
+            <span className="section-badge">全市场候选</span>
+          </div>
+          <div className="market-leader-grid">
+            {[...(rankings.quality_top10 || []).slice(0, 4), ...(rankings.potential_top10 || []).slice(0, 4)].map((item: any) => (
+              <button
+                className="leader-card"
+                key={`${item.market}-${item.symbol}`}
+                onClick={() => {
+                  setSymbol(item.symbol);
+                  setMarket(item.market);
+                  setResult(null);
+                }}
+              >
+                <div>
+                  <strong>{item.symbol}</strong>
+                  <p>{item.name}</p>
+                </div>
+                <span className={`action-pill ${String(item.action).toLowerCase()}`}>
+                  {item.action === 'BUY' ? '买入' : item.action === 'WATCH' ? '观察' : item.action}
+                </span>
+                <b>{item.board_score ?? item.final_score}</b>
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
+
       {error && (
         <div className="empty-state" style={{ borderColor: 'var(--loss)', marginBottom: 'var(--space-6)' }}>
           <p style={{ color: 'var(--loss)' }}>{error}</p>
@@ -110,6 +150,9 @@ export default function AnalysisDetail() {
             }}>
               {result.symbol}
             </span>
+            <Link to={`/stock?symbol=${encodeURIComponent(result.symbol)}&market=${market}`} style={{ color: 'var(--amber)', textDecoration: 'none' }}>
+              查看行情详情
+            </Link>
             {trade.action && (
               <span className={`stock-action ${trade.action}`}>
                 {trade.action === 'buy' ? '买入信号' : trade.action === 'sell' ? '卖出信号' : '观望'}

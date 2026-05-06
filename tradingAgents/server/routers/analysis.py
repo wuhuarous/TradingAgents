@@ -1,5 +1,6 @@
 from fastapi import APIRouter, HTTPException
 
+from tradingAgents.engine.analysis_fallback import run_rule_based_analysis
 from tradingAgents.engine.graph.workflow import run_analysis
 from tradingAgents.server.models.stock import StockAnalysisRequest, StockAnalysisResponse
 
@@ -10,6 +11,24 @@ router = APIRouter(prefix="/api/analysis", tags=["analysis"])
 def run_stock_analysis(req: StockAnalysisRequest):
     try:
         result = run_analysis(req.symbol, req.market)
+    except Exception as e:
+        result = run_rule_based_analysis(req.symbol, req.market, str(e))
+        return StockAnalysisResponse(
+            symbol=req.symbol,
+            market=req.market,
+            analysis={
+                "market": result.get("market_report"),
+                "fundamentals": result.get("fundamentals_report"),
+                "news": result.get("news_report"),
+                "bull": result.get("bull_report"),
+                "bear": result.get("bear_report"),
+                "research_decision": result.get("research_decision"),
+                "risk_evaluations": result.get("risk_evaluations"),
+                "final_risk_params": result.get("final_risk_params"),
+            },
+            trader_decision=result.get("trader_decision", {}),
+        )
+    try:
         return StockAnalysisResponse(
             symbol=req.symbol,
             market=req.market,

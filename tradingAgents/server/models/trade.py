@@ -6,6 +6,7 @@ class TradeRequest(BaseModel):
     action: str  # buy / sell
     price: float
     quantity: int
+    market: str = "a_stock"
 
 
 class TradeResponse(BaseModel):
@@ -17,6 +18,7 @@ class TradeResponse(BaseModel):
 class AccountSummary(BaseModel):
     initial_capital: float
     cash: float
+    positions_value: float = 0
     total_value: float
     total_pnl: float
     total_pnl_pct: float

@@ -8,3 +8,9 @@ dist/
 build/
 node_modules/
 .cache/
+logs/
+memory/
+tradingAgents/memory/
+.claude/worktrees/
+cols_utf8.txt
+tradingAgents/config/runtime_config.json

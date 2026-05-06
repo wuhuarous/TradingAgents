@@ -7,23 +7,70 @@ const LLM_PROVIDERS = [
   { key: 'anthropic', label: 'Anthropic', desc: 'Claude 系列' },
 ];
 
+const MODEL_PRESETS: Record<string, { deep: string[]; quick: string[]; defaultDeep: string; defaultQuick: string }> = {
+  deepseek: {
+    deep: ['deepseek-v4-pro', 'deepseek-v4-flash', 'deepseek-reasoner', 'deepseek-chat'],
+    quick: ['deepseek-v4-flash', 'deepseek-v4-pro', 'deepseek-chat', 'deepseek-reasoner'],
+    defaultDeep: 'deepseek-v4-pro',
+    defaultQuick: 'deepseek-v4-flash',
+  },
+  openai: {
+    deep: ['gpt-4o', 'gpt-4.1', 'gpt-4.1-mini', 'gpt-4o-mini'],
+    quick: ['gpt-4o-mini', 'gpt-4.1-mini', 'gpt-4o'],
+    defaultDeep: 'gpt-4o',
+    defaultQuick: 'gpt-4o-mini',
+  },
+  anthropic: {
+    deep: ['claude-3-5-sonnet-latest', 'claude-3-5-haiku-latest'],
+    quick: ['claude-3-5-haiku-latest', 'claude-3-5-sonnet-latest'],
+    defaultDeep: 'claude-3-5-sonnet-latest',
+    defaultQuick: 'claude-3-5-haiku-latest',
+  },
+};
+
+const DATA_SOURCES = [
+  { key: 'auto', label: '自动切换', desc: '当前生效：A股直连/缓存，港美股 yfinance' },
+  { key: 'akshare', label: 'AkShare', desc: '部分生效：A股历史/财务 fallback' },
+  { key: 'yfinance', label: 'yfinance', desc: '当前生效：港美股主链路' },
+  { key: 'tushare', label: 'Tushare', desc: '已保存，行情路由待接入' },
+];
+
+const NEWS_SOURCES = [
+  { key: 'auto', label: '自动聚合', desc: '国内 + 海外多源合并' },
+  { key: 'alpha_vantage', label: 'Alpha Vantage', desc: '海外新闻和情绪' },
+  { key: 'finnhub', label: 'Finnhub', desc: '海外市场新闻' },
+  { key: 'polygon', label: 'Polygon', desc: '美股新闻' },
+  { key: 'newsapi', label: 'NewsAPI', desc: '全球媒体搜索' },
+  { key: 'tavily', label: 'Tavily', desc: '搜索型新闻补充' },
+];
+
 export default function Settings() {
   const [settings, setSettings] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [saveMessage, setSaveMessage] = useState('');
 
   // Form state
   const [provider, setProvider] = useState('deepseek');
   const [deepseekKey, setDeepseekKey] = useState('');
   const [openaiKey, setOpenaiKey] = useState('');
   const [anthropicKey, setAnthropicKey] = useState('');
-  const [deepThink, setDeepThink] = useState('deepseek-chat');
-  const [quickThink, setQuickThink] = useState('deepseek-chat');
+  const [deepThink, setDeepThink] = useState('deepseek-v4-pro');
+  const [quickThink, setQuickThink] = useState('deepseek-v4-flash');
   const [capital, setCapital] = useState('1000000');
   const [posRatio, setPosRatio] = useState('0.2');
   const [totalRatio, setTotalRatio] = useState('0.8');
   const [stopLoss, setStopLoss] = useState('0.03');
+  const [marketSource, setMarketSource] = useState('auto');
+  const [newsSource, setNewsSource] = useState('auto');
+  const [tushareToken, setTushareToken] = useState('');
+  const [alphaVantageKey, setAlphaVantageKey] = useState('');
+  const [finnhubKey, setFinnhubKey] = useState('');
+  const [polygonKey, setPolygonKey] = useState('');
+  const [newsapiKey, setNewsapiKey] = useState('');
+  const [tavilyKey, setTavilyKey] = useState('');
+  const modelPreset = MODEL_PRESETS[provider] || MODEL_PRESETS.deepseek;
 
   useEffect(() => {
     api.getSettings()
@@ -31,16 +78,25 @@ export default function Settings() {
         setSettings(data);
         const llm = data.llm || {};
         const trade = data.trading || {};
+        const dataCfg = data.data || {};
         setProvider(llm.provider || 'deepseek');
         setDeepseekKey(llm.deepseek_api_key || '');
         setOpenaiKey(llm.openai_api_key || '');
         setAnthropicKey(llm.anthropic_api_key || '');
-        setDeepThink(llm.deep_think_model || 'deepseek-chat');
-        setQuickThink(llm.quick_think_model || 'deepseek-chat');
+        setDeepThink(llm.deep_think_model || 'deepseek-v4-pro');
+        setQuickThink(llm.quick_think_model || 'deepseek-v4-flash');
         setCapital(String(trade.initial_capital ?? 1000000));
         setPosRatio(String(trade.single_position_max_ratio ?? 0.2));
         setTotalRatio(String(trade.total_position_max_ratio ?? 0.8));
         setStopLoss(String(trade.daily_stop_loss_ratio ?? 0.03));
+        setMarketSource(dataCfg.preferred_market_data_source || 'auto');
+        setNewsSource(dataCfg.preferred_news_source || 'auto');
+        setTushareToken(dataCfg.tushare_token || '');
+        setAlphaVantageKey(dataCfg.alpha_vantage_api_key || '');
+        setFinnhubKey(dataCfg.finnhub_api_key || '');
+        setPolygonKey(dataCfg.polygon_api_key || '');
+        setNewsapiKey(dataCfg.newsapi_api_key || '');
+        setTavilyKey(dataCfg.tavily_api_key || '');
       })
       .catch(() => {})
       .finally(() => setLoading(false));
@@ -49,26 +105,47 @@ export default function Settings() {
   const handleSave = async () => {
     setSaving(true);
     setSaved(false);
+    setSaveMessage('');
     try {
-      await api.updateSettings({
+      const payload: Record<string, any> = {
         llm_provider: provider,
-        deepseek_api_key: deepseekKey || undefined,
-        openai_api_key: openaiKey || undefined,
-        anthropic_api_key: anthropicKey || undefined,
         deep_think_model: deepThink,
         quick_think_model: quickThink,
         initial_capital: parseFloat(capital),
         single_position_max_ratio: parseFloat(posRatio),
         total_position_max_ratio: parseFloat(totalRatio),
         daily_stop_loss_ratio: parseFloat(stopLoss),
-      });
+        preferred_market_data_source: marketSource,
+        preferred_news_source: newsSource,
+      };
+      addSecret(payload, 'deepseek_api_key', deepseekKey);
+      addSecret(payload, 'openai_api_key', openaiKey);
+      addSecret(payload, 'anthropic_api_key', anthropicKey);
+      addSecret(payload, 'tushare_token', tushareToken);
+      addSecret(payload, 'alpha_vantage_api_key', alphaVantageKey);
+      addSecret(payload, 'finnhub_api_key', finnhubKey);
+      addSecret(payload, 'polygon_api_key', polygonKey);
+      addSecret(payload, 'newsapi_api_key', newsapiKey);
+      addSecret(payload, 'tavily_api_key', tavilyKey);
+      const result = await api.updateSettings(payload);
       setSaved(true);
-      setTimeout(() => setSaved(false), 3000);
+      setSaveMessage(result.message || '配置已保存，当前服务已生效');
+      setTimeout(() => {
+        setSaved(false);
+        setSaveMessage('');
+      }, 5000);
     } catch {
-      // ignore
+      setSaveMessage('保存失败，请检查输入和服务状态');
     } finally {
       setSaving(false);
     }
+  };
+
+  const handleProviderChange = (nextProvider: string) => {
+    const preset = MODEL_PRESETS[nextProvider] || MODEL_PRESETS.deepseek;
+    setProvider(nextProvider);
+    setDeepThink(preset.defaultDeep);
+    setQuickThink(preset.defaultQuick);
   };
 
   if (loading) {
@@ -94,7 +171,7 @@ export default function Settings() {
         <p>LLM 模型选择 · 风控参数调整 · API 密钥管理</p>
       </header>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-8)', maxWidth: 960 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-8)', maxWidth: 1180 }}>
         {/* LLM Configuration */}
         <section>
           <div className="section-header" style={{ marginBottom: 'var(--space-6)' }}>
@@ -111,7 +188,7 @@ export default function Settings() {
                 <button
                   key={p.key}
                   className={`provider-card ${provider === p.key ? 'selected' : ''}`}
-                  onClick={() => setProvider(p.key)}
+                  onClick={() => handleProviderChange(p.key)}
                   style={{
                     padding: 'var(--space-3)',
                     border: provider === p.key ? '2px solid var(--amber)' : '1px solid var(--border)',
@@ -154,22 +231,66 @@ export default function Settings() {
 
             <div className="filter-group" style={{ marginBottom: 'var(--space-4)' }}>
               <label className="settings-label">深度思考模型</label>
-              <input
-                type="text"
+              <select
                 className="filter-input"
                 value={deepThink}
                 onChange={(e) => setDeepThink(e.target.value)}
-              />
+              >
+                {modelPreset.deep.map((model) => (
+                  <option key={model} value={model}>{model}</option>
+                ))}
+              </select>
             </div>
 
             <div className="filter-group">
               <label className="settings-label">快速响应模型</label>
-              <input
-                type="text"
+              <select
                 className="filter-input"
                 value={quickThink}
                 onChange={(e) => setQuickThink(e.target.value)}
-              />
+              >
+                {modelPreset.quick.map((model) => (
+                  <option key={model} value={model}>{model}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+        </section>
+
+        {/* Data Sources */}
+        <section>
+          <div className="section-header" style={{ marginBottom: 'var(--space-6)' }}>
+            <h2>数据源</h2>
+          </div>
+
+          <div className="settings-group">
+            <label className="settings-label">行情数据优先级</label>
+            <div className="provider-grid settings-option-grid">
+              {DATA_SOURCES.map((source) => (
+                <button key={source.key} className={`provider-card ${marketSource === source.key ? 'selected' : ''}`} onClick={() => setMarketSource(source.key)}>
+                  <div>{source.label}</div>
+                  <span>{source.desc}</span>
+                </button>
+              ))}
+            </div>
+
+            <label className="settings-label" style={{ marginTop: 'var(--space-5)' }}>新闻资讯优先级</label>
+            <div className="provider-grid settings-option-grid">
+              {NEWS_SOURCES.map((source) => (
+                <button key={source.key} className={`provider-card ${newsSource === source.key ? 'selected' : ''}`} onClick={() => setNewsSource(source.key)}>
+                  <div>{source.label}</div>
+                  <span>{source.desc}</span>
+                </button>
+              ))}
+            </div>
+
+            <div className="settings-key-grid">
+              <SecretInput label="Tushare Token" value={tushareToken} onChange={setTushareToken} />
+              <SecretInput label="Alpha Vantage Key" value={alphaVantageKey} onChange={setAlphaVantageKey} />
+              <SecretInput label="Finnhub Key" value={finnhubKey} onChange={setFinnhubKey} />
+              <SecretInput label="Polygon Key" value={polygonKey} onChange={setPolygonKey} />
+              <SecretInput label="NewsAPI Key" value={newsapiKey} onChange={setNewsapiKey} />
+              <SecretInput label="Tavily Key" value={tavilyKey} onChange={setTavilyKey} />
             </div>
           </div>
         </section>
@@ -183,13 +304,31 @@ export default function Settings() {
           <div className="settings-group">
             <div className="filter-group" style={{ marginBottom: 'var(--space-4)' }}>
               <label className="settings-label">
-                初始资金（¥{Number(capital).toLocaleString()}）
+                初始资金（¥{formatCurrencyNumber(capital)}）
               </label>
+              <div className="capital-input-row">
+                <input
+                  type="number"
+                  className="filter-input"
+                  min="10000"
+                  step="10000"
+                  value={capital}
+                  onChange={(e) => setCapital(e.target.value)}
+                />
+                <span>用于空账户或下次清空后重新模拟</span>
+              </div>
+              <div className="capital-presets">
+                {[100000, 500000, 1000000, 3000000, 5000000].map((value) => (
+                  <button key={value} type="button" onClick={() => setCapital(String(value))}>
+                    {formatShortMoney(value)}
+                  </button>
+                ))}
+              </div>
               <input
                 type="range"
-                min="100000"
+                min="10000"
                 max="10000000"
-                step="100000"
+                step="10000"
                 value={capital}
                 onChange={(e) => setCapital(e.target.value)}
                 style={{ width: '100%' }}
@@ -251,35 +390,46 @@ export default function Settings() {
         </button>
         {saved && (
           <span style={{ color: 'var(--gain)', fontSize: 'var(--font-size-sm)' }}>
-            配置已保存，重启服务后生效
+            {saveMessage || '配置已保存，当前服务已生效'}
           </span>
+        )}
+        {!saved && saveMessage && (
+          <span style={{ color: 'var(--loss)', fontSize: 'var(--font-size-sm)' }}>{saveMessage}</span>
         )}
       </div>
 
-      {/* Data Sources info card */}
-      <section style={{ marginTop: 'var(--space-10)', maxWidth: 960 }}>
-        <div className="section-header" style={{ marginBottom: 'var(--space-4)' }}>
-          <h2>数据源</h2>
-        </div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 'var(--space-4)' }}>
-          <div className="settings-card">
-            <h3>A股行情</h3>
-            <p>AkShare + BaoStock</p>
-          </div>
-          <div className="settings-card">
-            <h3>港美股行情</h3>
-            <p>yfinance</p>
-          </div>
-          <div className="settings-card">
-            <h3>财经新闻</h3>
-            <p>东方财富 + 全球快讯</p>
-          </div>
-          <div className="settings-card">
-            <h3>Tushare</h3>
-            <p>{settings?.data?.tushare_token ? '已配置' : '未配置'}</p>
-          </div>
-        </div>
+      <section className="settings-hint">
+        <h2>配置建议</h2>
+        <p>DeepSeek 已加入 v4 系列：深度任务建议 deepseek-v4-pro，快速任务建议 deepseek-v4-flash。余额不足时，深度分析会自动切换本地规则兜底。新闻源切换已接入后端并会影响海外资讯聚合；行情源当前只有 A股直连链路和港美股 yfinance 主链路，Tushare 等专业源会先保存配置，下一步接入到行情 Provider。</p>
       </section>
     </div>
   );
+}
+
+function SecretInput({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
+  return (
+    <div className="filter-group">
+      <label className="settings-label">{label}</label>
+      <input type="password" className="filter-input" placeholder="未配置" value={value} onChange={(e) => onChange(e.target.value)} />
+    </div>
+  );
+}
+
+function addSecret(payload: Record<string, any>, key: string, value: string) {
+  if (value && !value.includes('*')) {
+    payload[key] = value;
+  }
+}
+
+function formatCurrencyNumber(value: string) {
+  const n = Number(value || 0);
+  if (!Number.isFinite(n)) return '0';
+  return n.toLocaleString('zh-CN', { maximumFractionDigits: 0 });
+}
+
+function formatShortMoney(value: number) {
+  if (value >= 10000) {
+    return `${value / 10000}万`;
+  }
+  return String(value);
 }

@@ -5,8 +5,11 @@ import MarketOverview from './pages/MarketOverview';
 import Screener from './pages/Screener';
 import NewsFeed from './pages/NewsFeed';
 import AnalysisDetail from './pages/AnalysisDetail';
+import StockDetail from './pages/StockDetail';
 import TradingLog from './pages/TradingLog';
 import Settings from './pages/Settings';
+import SimulationLab from './pages/SimulationLab';
+import BacktestLab from './pages/BacktestLab';
 
 export default function App() {
   return (
@@ -14,6 +17,9 @@ export default function App() {
       <Routes>
         <Route path="/" element={<Dashboard />} />
         <Route path="/market" element={<MarketOverview />} />
+        <Route path="/stock" element={<StockDetail />} />
+        <Route path="/simulation" element={<SimulationLab />} />
+        <Route path="/backtest" element={<BacktestLab />} />
         <Route path="/screener" element={<Screener />} />
         <Route path="/news" element={<NewsFeed />} />
         <Route path="/analysis" element={<AnalysisDetail />} />

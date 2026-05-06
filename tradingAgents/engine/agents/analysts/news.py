@@ -13,7 +13,7 @@ class NewsAnalyst(BaseAgent):
 
 输出格式（JSON）：
 {
-    "score": 1-10,
+    "score": 1-10, 和
     "sentiment": "positive|neutral|negative",
     "key_events": [{"event": "事件描述", "impact": "positive|negative|neutral", "importance": 1-5}],
     "reasoning": "中文分析理由"
