@@ -50,8 +50,8 @@ class Settings(BaseSettings):
     max_volume_participation_pct: float = 0.05
 
     # Database
-    postgresql_url: str = "postgresql+asyncpg://trading:trading@119.91.40.149:5432/tradingagents"
-    clickhouse_url: str = "http://119.91.40.149:8123"
+    postgresql_url: str = ""
+    clickhouse_url: str = ""
     clickhouse_database: str = "tradingagents"
 
     # Paths — resolved relative to project root
