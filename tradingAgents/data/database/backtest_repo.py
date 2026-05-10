@@ -39,7 +39,7 @@ class BacktestRepository:
                     trade_date=trade.get("date"),
                     symbol=trade.get("symbol", ""),
                     name=trade.get("name", ""),
-                    action=trade.get("action", ""),
+                    action=_trade_action(trade.get("action", "")),
                     price=_float(trade.get("price")),
                     quantity=_float(trade.get("quantity")),
                     amount=_float(trade.get("amount")),
@@ -134,6 +134,15 @@ def _curve_dict(row: BacktestEquityCurve) -> dict[str, Any]:
         "drawdown": row.drawdown,
         "positions": row.positions or {},
     }
+
+
+def _trade_action(value: Any) -> str:
+    action = str(value or "").upper()
+    if action == "BUY_BLOCKED":
+        return "BUY_BLOCK"
+    if action == "SELL_BLOCKED":
+        return "SELL_BLOCK"
+    return action[:10]
 
 
 def _float(value: Any) -> float:

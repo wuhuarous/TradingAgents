@@ -10,11 +10,12 @@ from typing import Any
 import pandas as pd
 
 from tradingAgents.research.qlib_adapter import QlibAdapter
-from tradingAgents.trader.backtest import BacktestConfig, BaselineMomentumBacktester
+from tradingAgents.trader.backtest import BacktestConfig, BaselineMomentumBacktester, ShortTerm100BacktestStrategy
 
 
 @dataclass
 class ResearchExperimentConfig:
+    strategy: str = "baseline_momentum"
     market: str = "a_stock"
     period: str = "1y"
     initial_cash: float = 1_000_000
@@ -41,10 +42,10 @@ class ResearchExperimentRunner:
         warnings: list[str] = []
         if not qlib_status.available:
             warnings.append(qlib_status.message)
-        warnings.append("当前实验先使用本地研究基线；Qlib 安装后将切换为 Qlib Experiment/Recorder 运行。")
+        warnings.append("当前实验使用本地研究引擎；Qlib 安装后可用于更专业的因子实验与组合回测。")
 
         trials: list[dict[str, Any]] = []
-        backtester = BaselineMomentumBacktester()
+        backtester = ShortTerm100BacktestStrategy() if config.strategy == "short_term_100" else BaselineMomentumBacktester()
         combos = list(itertools.product(
             config.top_n_options,
             config.rebalance_options,
@@ -56,6 +57,7 @@ class ResearchExperimentRunner:
                 continue
             trial_started = datetime.utcnow()
             bt_config = BacktestConfig(
+                strategy=config.strategy,
                 market=config.market,
                 period=config.period,
                 initial_cash=config.initial_cash,
@@ -73,13 +75,13 @@ class ResearchExperimentRunner:
             score = _trial_score(split["valid"], split["test"], result.get("metrics", {}))
             trial_id = f"{experiment_id}_t{idx:02d}"
             trial_warnings = list(result.get("warnings", []))
-            trial_warnings.append("基础研究实验暂未启用涨跌停、停牌、成交量约束；Qlib 专业回测将补齐。")
+            trial_warnings.append("本地研究实验已计入手续费、滑点、A股涨跌停、T+1、停牌/无成交和成交量参与上限；Qlib 用于更专业的因子实验与组合回测。")
             trials.append({
                 "trial_id": trial_id,
                 "experiment_id": experiment_id,
                 "backtest_run_id": result.get("run_id", ""),
                 "engine": qlib_status.engine,
-                "strategy": self.strategy_name,
+                "strategy": config.strategy,
                 "market": config.market,
                 "status": result.get("status", "success"),
                 "params": result.get("params", {}),
@@ -102,12 +104,13 @@ class ResearchExperimentRunner:
             "experiment_id": experiment_id,
             "engine": qlib_status.engine,
             "qlib": qlib_status.as_dict(),
-            "strategy": self.strategy_name,
+            "strategy": config.strategy,
             "market": config.market,
             "period": config.period,
             "status": "success" if trials else "failed",
             "params": {
                 "universe_limit": config.universe_limit,
+                "strategy": config.strategy,
                 "top_n_options": config.top_n_options,
                 "rebalance_options": config.rebalance_options,
                 "lookback_short_options": config.lookback_short_options,

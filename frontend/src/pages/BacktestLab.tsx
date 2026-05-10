@@ -35,7 +35,7 @@ type BacktestTrade = {
   date: string;
   symbol: string;
   name: string;
-  action: 'BUY' | 'SELL';
+  action: string;
   price: number;
   quantity: number;
   amount: number;
@@ -101,8 +101,14 @@ const markets = [
   { key: 'hk_stock', label: '港股' },
   { key: 'us_stock', label: '美股' },
 ];
+const strategies = [
+  { key: 'baseline_momentum', label: '动量基线' },
+  { key: 'short_term_100', label: '短线100分' },
+];
+const PARAM_EXPERIMENT_MAX_UNIVERSE = 500;
 
 export default function BacktestLab() {
+  const [strategy, setStrategy] = useState('short_term_100');
   const [market, setMarket] = useState('a_stock');
   const [period, setPeriod] = useState('6mo');
   const [universeLimit, setUniverseLimit] = useState(200);
@@ -121,6 +127,7 @@ export default function BacktestLab() {
   const [qlibStatus, setQlibStatus] = useState<any>(null);
   const [projectDataStatus, setProjectDataStatus] = useState<QlibProjectDataStatus | null>(null);
   const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
 
   useEffect(() => {
     loadRuns(market);
@@ -159,16 +166,25 @@ export default function BacktestLab() {
   async function runBacktest() {
     setRunning(true);
     setError('');
+    setNotice('');
     try {
+      const safeUniverseLimit = clampInt(universeLimit, 5, 6000);
+      const safeTopN = clampInt(topN, 1, Math.min(20, safeUniverseLimit));
+      const safeRebalanceDays = clampInt(rebalanceDays, 5, 60);
+      setUniverseLimit(safeUniverseLimit);
+      setTopN(safeTopN);
+      setRebalanceDays(safeRebalanceDays);
       const result = await api.runBacktest({
+        strategy,
         market,
         period,
-        universe_limit: universeLimit,
-        top_n: Math.min(topN, universeLimit),
-        rebalance_days: rebalanceDays,
+        universe_limit: safeUniverseLimit,
+        top_n: safeTopN,
+        rebalance_days: safeRebalanceDays,
       });
       setSelected(result);
       await loadRuns(market);
+      await loadResearch(market);
       await selectRun(result.run_id);
     } catch (err: any) {
       setError(readError(err));
@@ -197,13 +213,25 @@ export default function BacktestLab() {
   async function runResearchGrid() {
     setResearchRunning(true);
     setError('');
+    setNotice('');
     try {
+      const safeUniverseLimit = clampInt(universeLimit, 5, 6000);
+      const researchUniverseLimit = Math.min(safeUniverseLimit, PARAM_EXPERIMENT_MAX_UNIVERSE);
+      const safeTopN = clampInt(topN, 1, Math.min(20, researchUniverseLimit));
+      const safeRebalanceDays = clampInt(rebalanceDays, 5, 60);
+      setUniverseLimit(safeUniverseLimit);
+      setTopN(safeTopN);
+      setRebalanceDays(safeRebalanceDays);
+      if (safeUniverseLimit > researchUniverseLimit) {
+        setNotice(`参数实验本次使用前 ${researchUniverseLimit} 只做交互式搜索，避免全市场实时历史行情超时；全市场验证请用 Qlib 实验。`);
+      }
       await api.runResearchGrid({
+        strategy,
         market,
         period,
-        universe_limit: universeLimit,
-        top_n_options: `${Math.max(1, topN)},${Math.min(20, topN + 2)}`,
-        rebalance_options: `${Math.max(5, rebalanceDays - 10)},${rebalanceDays}`,
+        universe_limit: researchUniverseLimit,
+        top_n_options: `${safeTopN},${Math.min(20, safeTopN + 2)}`,
+        rebalance_options: `${Math.max(5, safeRebalanceDays - 10)},${safeRebalanceDays}`,
       });
       await loadResearch(market);
       await loadRuns(market);
@@ -299,6 +327,14 @@ export default function BacktestLab() {
       <section className="backtest-control">
         <div className="backtest-fields">
           <label>
+            <span className="filter-label">策略</span>
+            <select className="filter-input" value={strategy} onChange={(e) => setStrategy(e.target.value)}>
+              {strategies.map((item) => (
+                <option value={item.key} key={item.key}>{item.label}</option>
+              ))}
+            </select>
+          </label>
+          <label>
             <span className="filter-label">市场</span>
             <select className="filter-input" value={market} onChange={(e) => setMarket(e.target.value)}>
               {markets.map((item) => (
@@ -336,6 +372,7 @@ export default function BacktestLab() {
       </section>
 
       {error && <div className="alert-error">{error}</div>}
+      {notice && <div className="alert-info">{notice}</div>}
 
       <section className="backtest-research-strip">
         <div>
@@ -387,8 +424,8 @@ export default function BacktestLab() {
         </div>
         {leaderboard.length === 0 ? (
           <div className="empty-state compact-empty">
-            <p>暂无参数实验</p>
-            <div className="empty-hint">点击“参数实验”后会按样本外表现生成排行榜</div>
+            <p>暂无策略结果</p>
+            <div className="empty-hint">运行回测、参数实验或 Qlib 实验后会生成排行榜</div>
           </div>
         ) : (
           <div className="backtest-table-wrap">
@@ -446,7 +483,7 @@ export default function BacktestLab() {
                 >
                   <div>
                     <strong>{run.run_id.replace('bt', '#')}</strong>
-                    <span>{marketLabel(run.market)} · {periodLabel(run.period)} · {run.trade_count} 笔</span>
+                    <span>{strategyLabel(run.strategy)} · {marketLabel(run.market)} · {periodLabel(run.period)} · {run.trade_count} 笔</span>
                   </div>
                   <b className={metricClass(run.metrics?.total_return || 0)}>
                     {formatPct(run.metrics?.total_return)}
@@ -469,7 +506,7 @@ export default function BacktestLab() {
                 <Metric title="总收益" value={formatPct(metrics.total_return)} tone={metricClass(metrics.total_return)} sub={`最终资产 ${formatMoney(selected.final_value)}`} />
                 <Metric title="年化收益" value={formatPct(metrics.annual_return)} tone={metricClass(metrics.annual_return)} sub="按交易日折算" />
                 <Metric title="最大回撤" value={formatPct(metrics.max_drawdown)} tone="loss" sub="越接近 0 越好" />
-                <Metric title="夏普比率" value={formatNum(metrics.sharpe)} tone={metricClass(metrics.sharpe)} sub={`胜率 ${formatPct(metrics.win_rate)}`} />
+                <Metric title="胜率/盈亏比" value={`${formatPct(metrics.win_rate)} / ${formatNum(metrics.profit_factor)}`} tone={metricClass(metrics.profit_factor)} sub={`夏普 ${formatNum(metrics.sharpe)}`} />
               </div>
 
               <section className="backtest-note">
@@ -481,6 +518,7 @@ export default function BacktestLab() {
                   <span>池 {selected.params?.universe_limit}</span>
                   <span>持仓 {selected.params?.top_n}</span>
                   <span>{selected.params?.rebalance_days} 日调仓</span>
+                  {selected.strategy === 'short_term_100' && <span>入选 {selected.params?.short_min_score} 分</span>}
                   <span>费率 {(Number(selected.params?.fee_rate || 0) * 100).toFixed(2)}%</span>
                 </div>
               </section>
@@ -613,7 +651,24 @@ const tooltipStyle = {
 };
 
 function readError(err: any) {
-  return err?.message || '请求失败';
+  const message = err?.message || '请求失败';
+  try {
+    const parsed = JSON.parse(message);
+    const detail = parsed?.detail;
+    if (Array.isArray(detail)) {
+      return detail.map((item) => item?.msg || JSON.stringify(item)).join('；');
+    }
+    if (detail) return String(detail);
+  } catch {
+    // Keep the original message when it is not JSON.
+  }
+  return message;
+}
+
+function clampInt(value: number, min: number, max: number) {
+  const next = Math.trunc(Number(value));
+  if (!Number.isFinite(next)) return min;
+  return Math.min(Math.max(next, min), max);
 }
 
 function formatPct(value?: number) {
@@ -658,8 +713,19 @@ function periodLabel(value: string) {
 function reasonLabel(value: string) {
   const map: Record<string, string> = {
     momentum_rank_in: '动量入选',
+    short_term_score_in: '短线评分入选',
+    short_term_add: '短线确认加仓',
+    short_stop_loss: '短线止损',
+    short_take_profit: '短线止盈',
+    short_score_faded: '评分走弱',
+    short_max_holding_days: '持仓到期',
     rebalance_out: '调仓换出',
     rebalance_trim: '仓位修正',
+    limit_up_blocked: '涨停限制',
+    limit_down_blocked: '跌停限制',
+    t1_blocked: 'T+1限制',
+    suspension_or_no_volume: '停牌/无成交',
+    volume_participation_blocked: '成交量限制',
   };
   return map[value] || value;
 }
@@ -667,6 +733,8 @@ function reasonLabel(value: string) {
 function strategyLabel(value: string) {
   const map: Record<string, string> = {
     baseline_momentum: '动量基线',
+    short_term_100: '短线100分',
+    qlib_csi300_gbdt_topk: 'Qlib GBDT TopK',
   };
   return map[value] || value;
 }

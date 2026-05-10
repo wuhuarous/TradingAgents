@@ -1,6 +1,7 @@
 """调度器运行器 — APScheduler 集成自动交易"""
 import logging
 from typing import Optional
+from zoneinfo import ZoneInfo
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -19,6 +20,7 @@ from tradingAgents.trader.scheduler.jobs import (
 from tradingAgents.data.database.market_sync import sync_market_quotes, sync_kline_daily
 
 logger = logging.getLogger(__name__)
+CN_TZ = ZoneInfo("Asia/Shanghai")
 
 
 def _sync_watchlist_klines():
@@ -48,7 +50,7 @@ class TradingScheduler:
         job_stores = {"default": MemoryJobStore()}
         self._scheduler = BackgroundScheduler(
             jobstores=job_stores,
-            timezone="Asia/Shanghai",
+            timezone=CN_TZ,
             job_defaults={"coalesce": True, "max_instances": 1},
         )
         self._jobs_config = self._build_jobs()
@@ -77,7 +79,7 @@ class TradingScheduler:
                 "id": "simulation_auto_cycle",
                 "name": "模拟自动交易",
                 "func": simulation_auto_cycle_job,
-                "cron": "*/30 9-14 * * mon-fri",
+                "cron": "40 10,14 * * mon-fri",
             },
             {
                 "id": "market_close_settlement",
@@ -109,7 +111,7 @@ class TradingScheduler:
         for job_cfg in self._jobs_config:
             self._scheduler.add_job(
                 func=job_cfg["func"],
-                trigger=CronTrigger.from_crontab(job_cfg["cron"]),
+                trigger=CronTrigger.from_crontab(job_cfg["cron"], timezone=CN_TZ),
                 id=job_cfg["id"],
                 name=job_cfg["name"],
                 replace_existing=True,
@@ -134,11 +136,12 @@ class TradingScheduler:
                     "id": j.id,
                     "name": j.name,
                     "cron": str(j.trigger) if j.trigger else "manual",
-                    "next_run": j.next_run_time.isoformat() if j.next_run_time else None,
+                    "next_run": j.next_run_time.astimezone(CN_TZ).isoformat() if j.next_run_time else None,
+                    "timezone": "Asia/Shanghai",
                 }
                 for j in jobs
             ]
-        return [{"id": j["id"], "name": j["name"], "cron": j["cron"], "next_run": None} for j in self._jobs_config]
+        return [{"id": j["id"], "name": j["name"], "cron": j["cron"], "next_run": None, "timezone": "Asia/Shanghai"} for j in self._jobs_config]
 
     def run_job(self, job_id: str) -> Optional[dict]:
         for job_cfg in self._jobs_config:

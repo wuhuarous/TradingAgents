@@ -1,6 +1,8 @@
-"""AI 交易策略引擎 — 将分析结果转换为具体买卖计划"""
+"""AI trading strategy engine: convert decisions into executable plans."""
+
+
 class StrategyEngine:
-    """根据 TraderAgent 的决策生成可执行的交易计划"""
+    """Generate executable trading plans from a TraderAgent decision."""
 
     @staticmethod
     def generate_plan(trader_decision: dict, account_cash: float) -> dict:

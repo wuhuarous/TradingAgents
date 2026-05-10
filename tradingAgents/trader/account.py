@@ -1,14 +1,20 @@
 """虚拟账户 — 资金管理 + 交易执行 (PostgreSQL-backed)"""
 import asyncio
 import logging
+import time
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
+from zoneinfo import ZoneInfo
 
 from tradingAgents.config.settings import settings
 from tradingAgents.trader.trade_rules import compute_trade_costs, is_same_china_trade_date
 
 logger = logging.getLogger(__name__)
+
+# Price-refresh TTL: skip repeated market-price fetches within this window
+_PRICE_CACHE_TTL_SECONDS = 60.0
+CN_TZ = ZoneInfo("Asia/Shanghai")
 
 
 class VirtualAccount:
@@ -27,6 +33,7 @@ class VirtualAccount:
         self._account_id: int | None = None
         self._repo = None
         self._persist = persist
+        self._last_price_refresh: float = 0
 
     # ── Properties ──
 
@@ -86,13 +93,18 @@ class VirtualAccount:
         self.orders = [_order_to_dict(o) for o in reversed(orders)]
         self.trade_log = list(self.orders)
 
-    async def arefresh_market_prices(self) -> dict:
+    async def arefresh_market_prices(self, force: bool = False) -> dict:
         """Mark open positions to latest quotes and persist current prices.
 
         Orders store the execution price. Portfolio PnL needs a separate
         mark-to-market refresh, otherwise a newly bought position stays at
         avg_cost forever and unrealized PnL appears as zero.
+
+        Rate-limited: skips refresh when called within _PRICE_CACHE_TTL_SECONDS
+        unless *force* is True.
         """
+        if not force and (time.monotonic() - self._last_price_refresh) < _PRICE_CACHE_TTL_SECONDS:
+            return {"updated": 0, "failed": 0, "cached": True}
         await self._ensure_account()
         if not self.positions:
             return {"updated": 0, "failed": 0}
@@ -123,6 +135,7 @@ class VirtualAccount:
         if updated:
             await self.aload(force=True)
             await self._record_snapshot("mark_to_market")
+        self._last_price_refresh = time.monotonic()
         return {"updated": updated, "failed": failed}
 
     def load(self, force: bool = False) -> None:
@@ -373,12 +386,21 @@ def _order_to_dict(order) -> dict:
         "fee": costs.total_fee,
         "cash_amount": order.cost + costs.total_fee if action == "buy" else order.cost - costs.total_fee,
         "reason": order.reason,
-        "timestamp": order.created_at.isoformat() if order.created_at else "",
+        "timestamp": _to_china_iso(order.created_at),
         "status": "filled",
     }
     if action == "sell":
         data["revenue"] = order.cost - costs.total_fee
     return data
+
+
+def _to_china_iso(value: datetime | None) -> str:
+    if value is None:
+        return ""
+    dt = value
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(CN_TZ).isoformat()
 
 
 def _latest_position_price(symbol: str, market: str) -> float:

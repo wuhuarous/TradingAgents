@@ -1,17 +1,22 @@
 """Backtest endpoints."""
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.concurrency import run_in_threadpool
 
 from tradingAgents.data.database.backtest_repo import BacktestRepository
-from tradingAgents.trader.backtest import BacktestConfig, BaselineMomentumBacktester
+from tradingAgents.data.database.research_repo import ResearchRepository
+from tradingAgents.trader.backtest import BacktestConfig, BaselineMomentumBacktester, ShortTerm100BacktestStrategy
 
 router = APIRouter(prefix="/api/backtest", tags=["backtest"])
+logger = logging.getLogger(__name__)
 
 
 @router.post("/run")
 async def run_backtest(
+    strategy: str = Query("baseline_momentum", pattern="^(baseline_momentum|short_term_100)$"),
     market: str = Query("a_stock"),
     period: str = Query("1y", pattern="^(3mo|6mo|1y)$"),
     initial_cash: float = Query(1_000_000, gt=0),
@@ -22,6 +27,7 @@ async def run_backtest(
     if top_n > universe_limit:
         raise HTTPException(status_code=400, detail="top_n 不能大于 universe_limit")
     config = BacktestConfig(
+        strategy=strategy,
         market=market,
         period=period,
         initial_cash=initial_cash,
@@ -29,8 +35,15 @@ async def run_backtest(
         top_n=top_n,
         rebalance_days=rebalance_days,
     )
-    result = await run_in_threadpool(BaselineMomentumBacktester().run, config)
-    return await BacktestRepository().save_result(result)
+    try:
+        backtester = ShortTerm100BacktestStrategy() if strategy == "short_term_100" else BaselineMomentumBacktester()
+        result = await run_in_threadpool(backtester.run, config)
+        saved = await BacktestRepository().save_result(result)
+        await ResearchRepository().add_backtest_to_leaderboard(saved)
+        return saved
+    except Exception as exc:
+        logger.exception("Backtest failed")
+        raise HTTPException(status_code=500, detail=f"回测执行失败: {exc}") from exc
 
 
 @router.get("/runs")

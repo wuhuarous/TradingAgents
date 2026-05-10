@@ -15,6 +15,8 @@ interface Account {
 interface PnLPoint {
   time: string;
   value: number;
+  total_pnl?: number;
+  total_value?: number;
 }
 
 export default function Dashboard() {
@@ -27,12 +29,22 @@ export default function Dashboard() {
   const [runs, setRuns] = useState<any[]>([]);
 
   useEffect(() => {
-    api.getAccount().then(setAccount).catch(() => {});
-    api.getPositions().then(setPositions).catch(() => {});
+    api.getAccountOverview().then((data) => {
+      setAccount(data.account);
+      setPositions(data.positions || []);
+    }).catch(() => {});
     api.getSimulationSummary().then(setSummary).catch(() => {});
     api.getQuantReadiness().then(setReadiness).catch(() => {});
     api.getSimulationRankings(10).then(setRankings).catch(() => {});
     api.getSimulationRuns(5).then((data) => setRuns(data.runs || [])).catch(() => {});
+    api.getDailyPnl(30).then((data) => {
+      setPnlHistory((data.points || []).map((item: any) => ({
+        time: formatDay(item.date),
+        value: Number(item.daily_pnl || 0),
+        total_pnl: Number(item.total_pnl || 0),
+        total_value: Number(item.total_value || 0),
+      })));
+    }).catch(() => setPnlHistory([]));
   }, []);
 
   const pnlPct = account ? account.total_pnl_pct * 100 : 0;
@@ -82,7 +94,7 @@ export default function Dashboard() {
                 color: isGain ? 'var(--gain)' : 'var(--loss)',
                 fontSize: 'var(--font-size-2xl)',
               }}>
-                {isGain ? '+' : ''}¥{account.total_pnl.toLocaleString()}
+                {isGain ? '+' : ''}¥{account.total_pnl.toLocaleString(undefined, { maximumFractionDigits: 2 })}
               </div>
               <div className={`metric-sub ${isGain ? 'gain' : 'loss'}`}>
                 {isGain ? '↑' : '↓'} {pnlPct.toFixed(2)}%
@@ -149,9 +161,9 @@ export default function Dashboard() {
           <section className="section">
             <div className="section-header">
               <h2>盈亏走势</h2>
-              <span className="section-badge">累计</span>
+              <Link className="section-badge link-badge" to="/reports">日报/月报</Link>
             </div>
-            <PnLChart data={pnlHistory.length > 0 ? pnlHistory : generateMockPnl(account)} />
+            <PnLChart data={pnlHistory} />
           </section>
 
           <section className="section">
@@ -236,28 +248,11 @@ function statusLabel(status: string) {
   return map[status] || status;
 }
 
-/** Generate mock PnL data when the backend history endpoint is not available yet. */
-function generateMockPnl(account: Account): PnLPoint[] {
-  const points: PnLPoint[] = [];
-  const days = 14;
-  const startValue = account.total_value - account.total_pnl;
-  const start = new Date();
-  start.setDate(start.getDate() - days);
-
-  for (let i = 0; i <= days; i++) {
-    const date = new Date(start);
-    date.setDate(date.getDate() + i);
-    const progress = i / days;
-    const noise = (Math.sin(i * 1.8) * 0.3 + Math.cos(i * 0.7) * 0.2) * (account.total_pnl * 0.15);
-    const value = Math.round(startValue + account.total_pnl * progress + noise);
-    points.push({
-      time: `${date.getMonth() + 1}/${date.getDate()}`,
-      value,
-    });
-  }
-  points[points.length - 1] = {
-    time: points[points.length - 1].time,
-    value: account.total_value,
-  };
-  return points;
+function formatDay(value?: string) {
+  if (!value) return '-';
+  const m = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (m) return `${Number(m[2])}/${Number(m[3])}`;
+  const date = new Date(value);
+  if (!Number.isNaN(date.getTime())) return `${date.getMonth() + 1}/${date.getDate()}`;
+  return value;
 }

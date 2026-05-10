@@ -1,7 +1,7 @@
 """定时任务实现 — 盘前分析 / 开盘执行 / 盘中监控 / 收盘结算"""
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from tradingAgents.config.settings import settings
@@ -12,6 +12,10 @@ from tradingAgents.data.providers.a_stock import AStockProvider
 
 logger = logging.getLogger(__name__)
 CN_TZ = ZoneInfo("Asia/Shanghai")
+
+
+def _now_cn_iso() -> str:
+    return datetime.now(tz=CN_TZ).isoformat()
 
 def _run_async(coro, timeout: int = 5):
     """Run async coroutine from APScheduler background thread."""
@@ -40,7 +44,7 @@ def pre_market_analysis_job() -> dict:
     if not settings.scheduler_live_data_enabled:
         return {
             "status": "completed",
-            "timestamp": datetime.now(tz=timezone.utc).isoformat(),
+            "timestamp": _now_cn_iso(),
             "candidates": 0,
             "plans_generated": 0,
             "results": [],
@@ -102,7 +106,7 @@ def pre_market_analysis_job() -> dict:
     logger.info("Pre-market analysis: %d candidates, %d plans saved to DB", len(candidates), plans_added)
     return {
         "status": "completed",
-        "timestamp": datetime.now(tz=timezone.utc).isoformat(),
+        "timestamp": _now_cn_iso(),
         "candidates": len(candidates),
         "plans_generated": plans_added,
         "results": results,
@@ -123,11 +127,11 @@ def market_open_trading_job() -> dict:
     """开盘交易：从 DB 读取待执行计划，通过 VirtualAccount 执行交易"""
     plans = _safe_run_async(_get_pending_plans(), [])
     if not plans:
-        return {"status": "no_plans", "timestamp": datetime.now(tz=timezone.utc).isoformat()}
+        return {"status": "no_plans", "timestamp": _now_cn_iso()}
 
     account = _safe_run_async(_get_or_create_account(), None)
     if not account:
-        return {"status": "no_plans", "timestamp": datetime.now(tz=timezone.utc).isoformat()}
+        return {"status": "no_plans", "timestamp": _now_cn_iso()}
     positions = _safe_run_async(_get_positions(account["id"]), [])
     total_position = sum(p["quantity"] * p["current_price"] for p in positions)
     capital = account["initial_capital"]
@@ -159,7 +163,7 @@ def market_open_trading_job() -> dict:
                 "symbol": plan["symbol"], "name": plan["name"],
                 "action": "buy", "price": plan["price"],
                 "quantity": plan["quantity"], "reason": plan.get("reason", ""),
-                "executed_at": datetime.now(tz=timezone.utc).isoformat(),
+                "executed_at": _now_cn_iso(),
             })
             _safe_run_async(_mark_plan_done(plan["id"]), None)
         else:
@@ -168,7 +172,7 @@ def market_open_trading_job() -> dict:
     logger.info("Market open trading: %d executed, %d deferred", len(executed), len(remaining))
     return {
         "status": "executed",
-        "timestamp": datetime.now(tz=timezone.utc).isoformat(),
+        "timestamp": _now_cn_iso(),
         "executed": executed,
         "deferred": [{"symbol": p["symbol"], "reason": p.get("reason", "")} for p in remaining],
         "total_position": total_position,
@@ -180,13 +184,13 @@ def simulation_auto_cycle_job() -> dict:
     if not settings.auto_simulation_enabled:
         return {
             "status": "disabled",
-            "timestamp": datetime.now(tz=timezone.utc).isoformat(),
+            "timestamp": _now_cn_iso(),
             "message": "auto_simulation_enabled=false",
         }
     if not _is_cn_trading_window():
         return {
             "status": "skipped",
-            "timestamp": datetime.now(tz=timezone.utc).isoformat(),
+            "timestamp": _now_cn_iso(),
             "message": "outside A-share trading window",
         }
 
@@ -206,12 +210,12 @@ def simulation_auto_cycle_job() -> dict:
     if not run:
         return {
             "status": "failed",
-            "timestamp": datetime.now(tz=timezone.utc).isoformat(),
+            "timestamp": _now_cn_iso(),
             "message": "simulation cycle failed",
         }
     return {
         "status": "completed",
-        "timestamp": datetime.now(tz=timezone.utc).isoformat(),
+        "timestamp": _now_cn_iso(),
         "market": run.get("market"),
         "run_id": run.get("run_id"),
         "orders": len(run.get("orders") or []),
@@ -277,12 +281,14 @@ async def _mark_plan_done(plan_id):
 
 def intraday_monitoring_job() -> dict:
     """盘中监控：从 DB 读取持仓，检查止损/止盈"""
+    if not _is_cn_trading_window():
+        return {"status": "skipped", "timestamp": _now_cn_iso(), "message": "outside A-share trading window"}
     account = _safe_run_async(_get_or_create_account(), None)
     if not account:
-        return {"status": "no_positions", "timestamp": datetime.now(tz=timezone.utc).isoformat()}
+        return {"status": "no_positions", "timestamp": _now_cn_iso()}
     positions = _safe_run_async(_get_positions(account["id"]), [])
     if not positions:
-        return {"status": "no_positions", "timestamp": datetime.now(tz=timezone.utc).isoformat()}
+        return {"status": "no_positions", "timestamp": _now_cn_iso()}
 
     alerts = []
     a_provider = AStockProvider()
@@ -319,7 +325,7 @@ def intraday_monitoring_job() -> dict:
 
     return {
         "status": "monitored",
-        "timestamp": datetime.now(tz=timezone.utc).isoformat(),
+        "timestamp": _now_cn_iso(),
         "positions": len(positions),
         "alerts": alerts,
     }
@@ -329,10 +335,10 @@ def market_close_settlement_job() -> dict:
     """收盘结算：从 DB 读取持仓，计算当日盈亏并更新现价"""
     account = _safe_run_async(_get_or_create_account(), None)
     if not account:
-        return {"status": "no_positions", "timestamp": datetime.now(tz=timezone.utc).isoformat()}
+        return {"status": "no_positions", "timestamp": _now_cn_iso()}
     positions = _safe_run_async(_get_positions(account["id"]), [])
     if not positions:
-        return {"status": "no_positions", "timestamp": datetime.now(tz=timezone.utc).isoformat()}
+        return {"status": "no_positions", "timestamp": _now_cn_iso()}
 
     a_provider = AStockProvider()
     us_provider = YFinanceProvider()
@@ -365,7 +371,7 @@ def market_close_settlement_job() -> dict:
     logger.info("Market close settlement: total PnL=%.2f, %d positions", total_pnl, len(details))
     return {
         "status": "settled",
-        "timestamp": datetime.now(tz=timezone.utc).isoformat(),
+        "timestamp": _now_cn_iso(),
         "total_pnl": round(total_pnl, 2),
         "positions": len(details),
         "details": details,
@@ -379,14 +385,14 @@ def review_backfill_job() -> dict:
 
     strategy = QualityMomentumStrategy()
     result = backfill_review_returns(strategy.recent_runs(limit=100), force_latest=False)
-    result["timestamp"] = datetime.now(tz=timezone.utc).isoformat()
+    result["timestamp"] = _now_cn_iso()
     return result
 
 
 def _is_cn_trading_window() -> bool:
     now = datetime.now(CN_TZ)
     minutes = now.hour * 60 + now.minute
-    morning = 9 * 60 + 35 <= minutes <= 11 * 60 + 30
+    morning = 9 * 60 + 30 <= minutes <= 11 * 60 + 30
     afternoon = 13 * 60 <= minutes <= 14 * 60 + 55
     return morning or afternoon
 

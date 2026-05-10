@@ -76,6 +76,14 @@ def get_settings():
                 "tavily": "active_when_key_configured",
             },
         },
+        "database": {
+            "postgresql_url": mask_dsn(_get_effective("postgresql_url", "")),
+            "clickhouse_url": mask_dsn(_get_effective("clickhouse_url", "")),
+            "clickhouse_database": _get_effective("clickhouse_database", "tradingagents"),
+            "clickhouse_user": _get_effective("clickhouse_user", "default"),
+            "clickhouse_password": mask_key(_get_effective("clickhouse_password", "")),
+            "config_hint": "数据库连接已统一建议放在项目根目录 .env；不要提交真实账号密码。",
+        },
     }
 
 
@@ -124,6 +132,16 @@ def mask_key(key: str) -> str:
     if len(key) <= 8:
         return "*" * len(key)
     return key[:4] + "****" + key[-4:]
+
+
+def mask_dsn(value: str) -> str:
+    if not value:
+        return ""
+    if "@" not in value:
+        return value
+    prefix, suffix = value.rsplit("@", 1)
+    scheme = prefix.split("://", 1)[0] + "://" if "://" in prefix else ""
+    return f"{scheme}****@{suffix}"
 
 
 def _run_async(coro):

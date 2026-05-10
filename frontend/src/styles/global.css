@@ -354,6 +354,20 @@ body::after {
   color: var(--text-secondary);
 }
 
+.section-header .section-badge.link-badge {
+  color: var(--amber);
+  text-decoration: none;
+  border-color: rgba(212, 168, 83, 0.26);
+  background: var(--amber-dim);
+  transition: border-color var(--duration-fast) var(--ease-out),
+    background var(--duration-fast) var(--ease-out);
+}
+
+.section-header .section-badge.link-badge:hover {
+  border-color: rgba(212, 168, 83, 0.48);
+  background: rgba(212, 168, 83, 0.18);
+}
+
 /* ===== Chart Area ===== */
 
 .chart-container {
@@ -431,9 +445,20 @@ body::after {
   color: var(--gain);
 }
 
+.data-table .badge.add {
+  background: rgba(216, 74, 74, 0.14);
+  color: var(--gain);
+}
+
 .data-table .badge.sell {
   background: var(--loss-dim);
   color: var(--loss);
+}
+
+.data-table .badge.buy_block,
+.data-table .badge.sell_block {
+  background: rgba(148, 163, 184, 0.12);
+  color: var(--text-secondary);
 }
 
 /* ===== Stock Cards (Analysis) ===== */
@@ -1122,6 +1147,15 @@ input[type="range"]::-webkit-slider-thumb {
   color: var(--danger);
 }
 
+.alert-info {
+  margin-bottom: var(--space-6);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius);
+  background: rgba(77, 163, 255, 0.10);
+  border: 1px solid rgba(77, 163, 255, 0.28);
+  color: #8fc5ff;
+}
+
 .simulation-grid {
   display: grid;
   grid-template-columns: 340px minmax(0, 1fr);
@@ -1578,7 +1612,7 @@ input[type="range"]::-webkit-slider-thumb {
 
 .backtest-fields {
   display: grid;
-  grid-template-columns: repeat(5, minmax(120px, 1fr));
+  grid-template-columns: repeat(6, minmax(110px, 1fr));
   gap: var(--space-4);
 }
 
@@ -1817,6 +1851,40 @@ input[type="range"]::-webkit-slider-thumb {
 
 .compact-empty {
   padding: var(--space-8) var(--space-4);
+}
+
+/* ===== Reports ===== */
+
+.report-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-6);
+}
+
+.report-range {
+  width: 144px;
+  flex: 0 0 auto;
+}
+
+.report-metrics {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin-bottom: var(--space-8);
+}
+
+.report-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr);
+  gap: var(--space-5);
+}
+
+.report-table-card {
+  min-width: 0;
+  margin-bottom: 0;
+}
+
+.report-table-card .data-table {
+  min-width: 620px;
 }
 
 /* ===== Dashboard / Screener Enhancements ===== */
@@ -2357,6 +2425,7 @@ input[type="range"]::-webkit-slider-thumb {
   .simulation-grid,
   .backtest-grid,
   .backtest-chart-grid,
+  .report-grid,
   .news-dashboard,
   .readiness-grid {
     grid-template-columns: 1fr;
@@ -2375,11 +2444,15 @@ input[type="range"]::-webkit-slider-thumb {
   .simulation-control,
   .simulation-header,
   .backtest-header,
+  .report-header,
   .backtest-note,
   .backtest-research-strip,
   .readiness-head {
     flex-direction: column;
     align-items: stretch;
+  }
+  .report-range {
+    width: 100%;
   }
   .backtest-control,
   .backtest-fields {
@@ -2405,6 +2478,7 @@ input[type="range"]::-webkit-slider-thumb {
   .trade-plan-grid,
   .evidence-grid,
   .backtest-metrics,
+  .report-metrics,
   .data-loop-grid {
     grid-template-columns: 1fr;
   }

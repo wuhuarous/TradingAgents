@@ -36,6 +36,11 @@ export default function Layout({ children }: { children: React.ReactNode }) {
             </NavLink>
           </li>
           <li>
+            <NavLink to="/reports" className={({ isActive }) => isActive ? 'active' : ''}>
+              <span className="nav-icon">▥</span>收益报表
+            </NavLink>
+          </li>
+          <li>
             <NavLink to="/news" className={({ isActive }) => isActive ? 'active' : ''}>
               <span className="nav-icon">⊠</span>新闻资讯
             </NavLink>

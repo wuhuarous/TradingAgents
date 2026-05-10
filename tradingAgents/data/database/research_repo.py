@@ -89,6 +89,35 @@ class ResearchRepository:
             result = await session.execute(stmt)
             return [_leaderboard_dict(row) for row in result.scalars().all()]
 
+    async def add_backtest_to_leaderboard(self, result: dict[str, Any]) -> None:
+        if result.get("status") != "success":
+            return
+        metrics = result.get("metrics") or {}
+        run_id = str(result.get("run_id") or "")
+        if not run_id:
+            return
+        async with get_pg_session() as session:
+            session.add(StrategyLeaderboard(
+                market=result.get("market", ""),
+                strategy=result.get("strategy", "baseline_momentum"),
+                engine="single_backtest",
+                experiment_id=f"manual_{run_id}",
+                trial_id=f"{run_id}_single",
+                backtest_run_id=run_id,
+                score=_single_backtest_score(metrics),
+                annual_return=_float(metrics.get("annual_return")),
+                max_drawdown=_float(metrics.get("max_drawdown")),
+                sharpe=_float(metrics.get("sharpe")),
+                win_rate=_float(metrics.get("win_rate")),
+                test_annual_return=_float(metrics.get("annual_return")),
+                test_max_drawdown=_float(metrics.get("max_drawdown")),
+                test_sharpe=_float(metrics.get("sharpe")),
+                data_coverage=_coverage_from_metrics(metrics, result.get("period", "")),
+                params=result.get("params", {}),
+                metrics={"overall": metrics, "test": metrics},
+            ))
+            await session.commit()
+
 
 def _leaderboard_row(experiment: dict[str, Any], trial: dict[str, Any]) -> StrategyLeaderboard:
     overall = trial.get("overall_metrics", {}) or {}
@@ -117,6 +146,25 @@ def _leaderboard_row(experiment: dict[str, Any], trial: dict[str, Any]) -> Strat
             "overall": overall,
         },
     )
+
+
+def _single_backtest_score(metrics: dict[str, Any]) -> float:
+    annual_return = _float(metrics.get("annual_return"))
+    max_drawdown = abs(_float(metrics.get("max_drawdown")))
+    sharpe = _float(metrics.get("sharpe"))
+    win_rate = _float(metrics.get("win_rate"))
+    trade_count = _float(metrics.get("trade_count"))
+    activity = min(trade_count / 20, 1.0)
+    score = annual_return * 0.45 + sharpe * 0.12 + win_rate * 0.08 + activity * 0.05 - max_drawdown * 0.30
+    return round(score, 6)
+
+
+def _coverage_from_metrics(metrics: dict[str, Any], period: str) -> float:
+    expected = {"3mo": 63, "6mo": 126, "1y": 252}.get(period, 252)
+    days = _float(metrics.get("days"))
+    if expected <= 0:
+        return 0
+    return round(min(days / expected, 1.0), 4)
 
 
 def _experiment_dict(row: StrategyExperiment) -> dict[str, Any]:

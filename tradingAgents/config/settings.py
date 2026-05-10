@@ -53,6 +53,8 @@ class Settings(BaseSettings):
     postgresql_url: str = ""
     clickhouse_url: str = ""
     clickhouse_database: str = "tradingagents"
+    clickhouse_user: str = "default"
+    clickhouse_password: str = ""
 
     # Paths — resolved relative to project root
     data_dir: str = str(PROJECT_ROOT / "data" / "cache")
@@ -69,6 +71,32 @@ class Settings(BaseSettings):
 
 settings = Settings()
 
+DATABASE_ENV_KEYS = {
+    "postgresql_url",
+    "clickhouse_url",
+    "clickhouse_database",
+    "clickhouse_user",
+    "clickhouse_password",
+}
+
+
+def apply_file_overrides() -> None:
+    """Apply optional local JSON config values without committing secrets."""
+    for path in (
+        PROJECT_ROOT / "settings.json",
+        PROJECT_ROOT / "config" / "settings.local.json",
+    ):
+        if not path.exists():
+            continue
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        overrides = _flatten_config(data)
+        for key in DATABASE_ENV_KEYS:
+            overrides.pop(key, None)
+        _apply_overrides(overrides)
+
 
 def apply_runtime_overrides() -> None:
     """Apply persisted runtime_config.json values to the in-process settings."""
@@ -79,6 +107,21 @@ def apply_runtime_overrides() -> None:
         data = json.loads(runtime_path.read_text(encoding="utf-8"))
     except Exception:
         return
+    for key in DATABASE_ENV_KEYS:
+        data.pop(key, None)
+    _apply_overrides(data)
+
+
+def _flatten_config(data: dict) -> dict:
+    flattened = dict(data)
+    for section in ("database", "llm", "data", "trading", "server", "scheduler"):
+        value = flattened.pop(section, None)
+        if isinstance(value, dict):
+            flattened.update(value)
+    return flattened
+
+
+def _apply_overrides(data: dict) -> None:
     for key, value in data.items():
         if isinstance(value, str) and "*" in value and (
             key.endswith("_api_key") or key.endswith("_token")
@@ -88,4 +131,5 @@ def apply_runtime_overrides() -> None:
             setattr(settings, key, value)
 
 
+apply_file_overrides()
 apply_runtime_overrides()

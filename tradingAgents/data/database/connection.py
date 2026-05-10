@@ -51,15 +51,15 @@ def get_ch_client():
             host=host,
             port=port,
             database="default",
-            username="default",
-            password="",
+            username=settings.clickhouse_user,
+            password=settings.clickhouse_password,
         )
         bootstrap.command(f"CREATE DATABASE IF NOT EXISTS {settings.clickhouse_database}")
         _ch_client = clickhouse_connect.get_client(
             host=host,
             port=port,
             database=settings.clickhouse_database,
-            username="default",
-            password="",
+            username=settings.clickhouse_user,
+            password=settings.clickhouse_password,
         )
     return _ch_client

@@ -32,6 +32,7 @@ from tradingAgents.data.universe import get_universe, list_markets
 from tradingAgents.engine.dataflows.interface import Market
 from tradingAgents.engine.dataflows.yfinance import YFinanceProvider
 from tradingAgents.trader.account import VirtualAccount
+from tradingAgents.trader.strategy.short_term_100 import ShortTerm100Strategy
 from tradingAgents.trader.trade_rules import (
     can_buy_at_price,
     can_sell_at_price,
@@ -244,6 +245,9 @@ class QualityMomentumStrategy:
 
         risk_level = _risk_level(risk_score)
         action = _action_from_score(final_score, risk_level, momentum_score, sentiment_score, short_term_score)
+        if short_term.get("exit_signal") and action == "BUY":
+            action = "WATCH"
+            final_score = min(final_score, 69)
         reasons, warnings = _explain(
             final_score,
             fundamentals,
@@ -257,6 +261,8 @@ class QualityMomentumStrategy:
         )
         reasons.extend(short_term.get("reasons", [])[:4])
         warnings.extend(short_term.get("warnings", [])[:3])
+        if short_term.get("exit_signal"):
+            warnings.append("短线退出信号已触发，禁止新开仓和加仓")
         plan = _trade_plan(price, action, self.config, short_term)
 
         result = {
@@ -321,12 +327,8 @@ class QualityMomentumStrategy:
             current_price = matched.get("price") if matched else pos.get("current_price", pos.get("avg_cost", 0))
             avg_cost = pos.get("avg_cost", 0)
             pnl_pct = (current_price / avg_cost - 1) if avg_cost else 0
-            should_sell = (
-                pnl_pct <= -self.config.stop_loss_pct
-                or pnl_pct >= self.config.take_profit_pct
-                or (matched and matched["final_score"] < 52)
-                or (matched and matched["scores"]["sentiment"] < 35)
-            )
+            sell_reason = _sell_reason(pnl_pct, matched, self.config)
+            should_sell = bool(sell_reason)
             if should_sell and matched and is_suspended_or_untradable(
                 current_price,
                 matched.get("volume", 0),
@@ -341,7 +343,7 @@ class QualityMomentumStrategy:
                 decisions.append({"symbol": symbol, "action": "SELL_BLOCKED", "reason": "跌停价附近，模拟规则禁止卖出"})
                 continue
             if should_sell and current_price > 0:
-                reason = _sell_reason(pnl_pct, matched)
+                reason = sell_reason
                 order = account.sell(symbol, current_price, pos.get("quantity", 0), reason)
                 if order:
                     orders.append(order)
@@ -457,12 +459,8 @@ class QualityMomentumStrategy:
             current_price = matched.get("price") if matched else pos.get("current_price", pos.get("avg_cost", 0))
             avg_cost = pos.get("avg_cost", 0)
             pnl_pct = (current_price / avg_cost - 1) if avg_cost else 0
-            should_sell = (
-                pnl_pct <= -self.config.stop_loss_pct
-                or pnl_pct >= self.config.take_profit_pct
-                or (matched and matched["final_score"] < 52)
-                or (matched and matched["scores"]["sentiment"] < 35)
-            )
+            sell_reason = _sell_reason(pnl_pct, matched, self.config)
+            should_sell = bool(sell_reason)
             if should_sell and matched and is_suspended_or_untradable(
                 current_price,
                 matched.get("volume", 0),
@@ -477,7 +475,7 @@ class QualityMomentumStrategy:
                 decisions.append({"symbol": symbol, "action": "SELL_BLOCKED", "reason": "跌停价附近，模拟规则禁止卖出"})
                 continue
             if should_sell and current_price > 0:
-                reason = _sell_reason(pnl_pct, matched)
+                reason = sell_reason
                 order = await account.asell(symbol, current_price, pos.get("quantity", 0), reason)
                 if order:
                     orders.append(order)
@@ -785,148 +783,7 @@ def _technical_snapshot(hist: pd.DataFrame) -> dict[str, float | bool]:
 
 
 def _short_term_snapshot(hist: pd.DataFrame, quote: Any, fundamentals: dict[str, float]) -> dict[str, Any]:
-    close = _series(hist, "收盘", "Close", "close")
-    volume = _series(hist, "成交量", "Volume", "volume")
-    high = _series(hist, "最高", "High", "high")
-    low = _series(hist, "最低", "Low", "low")
-
-    price = float(getattr(quote, "price", 0) or 0)
-    prev_close = float(getattr(quote, "close", 0) or 0)
-    current_volume = float(getattr(quote, "volume", 0) or 0)
-    current_high = float(getattr(quote, "high", 0) or price)
-    current_low = float(getattr(quote, "low", 0) or price)
-    market_cap = float(getattr(quote, "market_cap", 0) or 0)
-
-    components: list[dict[str, Any]] = []
-    reasons: list[str] = []
-    warnings: list[str] = []
-
-    def add(key: str, label: str, points: int, passed: bool, detail: str = "") -> None:
-        components.append({
-            "key": key,
-            "label": label,
-            "points": points,
-            "earned": points if passed else 0,
-            "passed": passed,
-            "detail": detail,
-        })
-        if passed:
-            reasons.append(f"短线加分: {label}{'，' + detail if detail else ''}")
-
-    if close.empty or price <= 0:
-        return {
-            "score": 0,
-            "components": [],
-            "reasons": [],
-            "warnings": ["短线数据不足，不能按进攻模型交易"],
-            "buy_tier": "none",
-            "initial_position_ratio": 0,
-            "add_position_ratio": 0,
-            "stop_loss": 0,
-            "take_profit": 0,
-        }
-
-    combined_close = pd.concat([close, pd.Series([price])], ignore_index=True)
-    combined_volume = pd.concat([volume, pd.Series([current_volume])], ignore_index=True) if not volume.empty else pd.Series([current_volume])
-    combined_high = pd.concat([high, pd.Series([current_high])], ignore_index=True) if not high.empty else combined_close
-    combined_low = pd.concat([low, pd.Series([current_low])], ignore_index=True) if not low.empty else combined_close
-
-    pct = combined_close.pct_change().fillna(0)
-    recent_returns = pct.tail(30)
-    limit_up_pct = 0.195 if str(getattr(quote, "symbol", "")).startswith(("300", "301", "688")) else 0.095
-    limit_mask = recent_returns >= limit_up_pct
-    has_limit_up = bool(limit_mask.any())
-    limit_indices = list(limit_mask[limit_mask].index)
-    limit_idx = int(limit_indices[-1]) if limit_indices else None
-    limit_low = float(combined_low.iloc[limit_idx]) if limit_idx is not None and limit_idx < len(combined_low) else 0
-    held_limit_low = bool(limit_low and price >= limit_low)
-
-    avg_vol_30 = float(combined_volume.tail(31).iloc[:-1].mean()) if len(combined_volume) >= 31 else float(combined_volume.mean() or 0)
-    max_recent_vol_ratio = float((combined_volume.tail(30) / avg_vol_30).max()) if avg_vol_30 else 0
-    has_double_volume = max_recent_vol_ratio >= 2
-
-    high_20_prev = float(combined_high.iloc[:-1].tail(20).max()) if len(combined_high) > 1 else price
-    high_60_prev = float(combined_high.iloc[:-1].tail(60).max()) if len(combined_high) > 1 else price
-    low_20_prev = float(combined_low.iloc[:-1].tail(20).min()) if len(combined_low) > 1 else price
-    range_20 = (high_20_prev / low_20_prev - 1) if low_20_prev else 0
-    breakout = price >= high_20_prev * 0.995 or price >= high_60_prev * 0.99
-    sideways_breakout = range_20 <= 0.18 and breakout
-
-    ma5 = float(combined_close.tail(5).mean())
-    ma10 = float(combined_close.tail(10).mean()) if len(combined_close) >= 10 else ma5
-    pullback_volume = False
-    if len(combined_close) >= 8 and len(combined_volume) >= 8:
-        last_3_ret = combined_close.iloc[-1] / combined_close.iloc[-4] - 1 if combined_close.iloc[-4] else 0
-        vol_3 = float(combined_volume.tail(3).mean())
-        vol_10 = float(combined_volume.tail(10).mean()) if len(combined_volume) >= 10 else vol_3
-        pullback_volume = -0.08 <= last_3_ret <= 0.03 and vol_3 <= vol_10 * 0.85 and price >= ma10 * 0.98
-
-    latest_ret = (price / prev_close - 1) if prev_close else 0
-    rel_strength = _short_market_resilience(combined_close)
-    close_position = (price - current_low) / (current_high - current_low) if current_high > current_low else 1
-    stand_key_level = price >= max(ma5, ma10) and close_position >= 0.55
-
-    small_cap = 0 < market_cap <= 100
-    if market_cap <= 0:
-        pb = fundamentals.get("pb", 0)
-        small_cap = 0 < pb <= 8 and price < 80
-        warnings.append("市值字段缺失，小市值项用估值/价格作弱替代")
-
-    add("limit_up_30d", "30 天内有涨停", 15, has_limit_up)
-    add("double_volume_30d", "30 天内有倍量", 10, has_double_volume, f"最高量比 {max_recent_vol_ratio:.1f}x" if max_recent_vol_ratio else "")
-    add("small_cap", "市值 100 亿以内", 10, small_cap, f"市值 {market_cap:.1f} 亿" if market_cap else "")
-    add("hold_limit_low", "涨停后未跌破涨停日最低价", 15, has_limit_up and held_limit_low)
-    add("breakout", "横盘突破或突破前高", 15, breakout or sideways_breakout)
-    add("market_resilience", "大盘跌它不跌", 15, rel_strength)
-    add("pullback_absorption", "回调缩量、有承接", 10, pullback_volume)
-    add("late_key_level", "下午 2 点后仍站稳关键位", 10, stand_key_level)
-
-    score = sum(item["earned"] for item in components)
-    if latest_ret >= limit_up_pct:
-        warnings.append("当前接近涨停，模型只允许观察，不追涨买入")
-    if close_position < 0.35:
-        warnings.append("当前价格接近日内低位，承接不足")
-
-    buy_tier = "watch"
-    initial_ratio = 0.0
-    add_ratio = 0.0
-    if score >= 90:
-        buy_tier = "aggressive"
-        initial_ratio = 0.30
-        add_ratio = 0.20
-    elif score >= 80:
-        buy_tier = "pilot"
-        initial_ratio = 0.22
-        add_ratio = 0.15
-    elif score >= 70:
-        buy_tier = "watch"
-        initial_ratio = 0.0
-
-    stop_base = limit_low if limit_low and held_limit_low else min(ma10, price * 0.94)
-    stop_loss = min(price * 0.94, stop_base * 0.995) if stop_base > 0 else price * 0.94
-    take_profit = price * (1.12 if buy_tier == "pilot" else 1.18 if buy_tier == "aggressive" else 1.10)
-
-    return {
-        "score": round(float(score), 1),
-        "components": components,
-        "reasons": reasons,
-        "warnings": warnings,
-        "buy_tier": buy_tier,
-        "initial_position_ratio": initial_ratio,
-        "add_position_ratio": add_ratio,
-        "stop_loss": round(stop_loss, 3),
-        "take_profit": round(take_profit, 3),
-        "key_level": round(max(ma5, ma10), 3),
-        "close_position": round(close_position, 3),
-    }
-
-
-def _short_market_resilience(close: pd.Series) -> bool:
-    if close is None or len(close) < 8:
-        return False
-    ret_5 = close.iloc[-1] / close.iloc[-6] - 1 if close.iloc[-6] else 0
-    drawdown_5 = close.iloc[-1] / close.tail(6).max() - 1 if close.tail(6).max() else 0
-    return ret_5 >= -0.015 and drawdown_5 >= -0.05
+    return ShortTerm100Strategy().score(hist, quote, fundamentals)
 
 
 def _sentiment_snapshot(news_items: list[Any]) -> dict[str, Any]:
@@ -1157,14 +1014,23 @@ def _explain(
     return reasons, warnings
 
 
-def _sell_reason(pnl_pct: float, matched: dict[str, Any] | None) -> str:
-    if pnl_pct <= -0.08:
+def _sell_reason(pnl_pct: float, matched: dict[str, Any] | None, config: StrategyConfig | None = None) -> str:
+    config = config or StrategyConfig()
+    if pnl_pct <= -config.stop_loss_pct:
         return f"自动卖出: 触发止损，收益 {pnl_pct * 100:.1f}%"
-    if pnl_pct >= 0.22:
+    if pnl_pct >= config.take_profit_pct:
         return f"自动卖出: 达到止盈，收益 {pnl_pct * 100:.1f}%"
-    if matched and matched["scores"]["sentiment"] < 35:
+    if not matched:
+        return ""
+    short_term = matched.get("short_term") or {}
+    if short_term.get("exit_signal"):
+        reason = short_term.get("exit_reason") or "形态走弱"
+        return f"自动卖出: 短线退出信号，{reason}"
+    if matched.get("final_score", 0) < 52:
+        return "自动卖出: 综合评分跌破持仓阈值"
+    if matched.get("scores", {}).get("sentiment", 50) < 35:
         return "自动卖出: 舆情明显转弱"
-    return "自动卖出: 综合评分跌破持仓阈值"
+    return ""
 
 
 def _should_add_position(

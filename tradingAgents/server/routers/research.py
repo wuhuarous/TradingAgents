@@ -1,6 +1,8 @@
 """Research experiment and strategy leaderboard endpoints."""
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.concurrency import run_in_threadpool
 
@@ -13,6 +15,8 @@ from tradingAgents.research.qlib_data_exporter import QlibDataExporter, QlibExpo
 from tradingAgents.research.qlib_workflow import QlibWorkflowConfig, QlibWorkflowRunner
 
 router = APIRouter(prefix="/api/research", tags=["research"])
+logger = logging.getLogger(__name__)
+MAX_INTERACTIVE_GRID_UNIVERSE = 500
 
 
 @router.get("/qlib/status")
@@ -73,6 +77,7 @@ async def export_project_data_to_qlib(
 
 @router.post("/experiments/run-grid")
 async def run_parameter_grid(
+    strategy: str = Query("baseline_momentum", pattern="^(baseline_momentum|short_term_100)$"),
     market: str = Query("a_stock"),
     period: str = Query("1y", pattern="^(3mo|6mo|1y)$"),
     initial_cash: float = Query(1_000_000, gt=0),
@@ -93,11 +98,15 @@ async def run_parameter_grid(
     if trial_count > 24:
         raise HTTPException(status_code=400, detail="参数组合过多，请控制在 24 组以内")
 
+    requested_universe_limit = universe_limit
+    effective_universe_limit = min(universe_limit, MAX_INTERACTIVE_GRID_UNIVERSE)
+    top_ns = [min(item, effective_universe_limit) for item in top_ns]
     config = ResearchExperimentConfig(
+        strategy=strategy,
         market=market,
         period=period,
         initial_cash=initial_cash,
-        universe_limit=universe_limit,
+        universe_limit=effective_universe_limit,
         top_n_options=top_ns,
         rebalance_options=rebalances,
         lookback_short_options=lookback_shorts,
@@ -106,13 +115,25 @@ async def run_parameter_grid(
         slippage_rate=slippage_rate,
         min_fee=min_fee,
     )
-    result = await run_in_threadpool(ResearchExperimentRunner().run_grid, config)
-    backtest_repo = BacktestRepository()
-    for trial in result.get("trials", []):
-        backtest_result = trial.pop("backtest_result", None)
-        if backtest_result:
-            await backtest_repo.save_result(backtest_result)
-    return await ResearchRepository().save_experiment(result)
+    try:
+        result = await run_in_threadpool(ResearchExperimentRunner().run_grid, config)
+        if requested_universe_limit > effective_universe_limit:
+            result.setdefault("warnings", []).insert(
+                0,
+                f"交互式参数实验已将股票池从 {requested_universe_limit} 限制为 {effective_universe_limit}，避免实时历史行情请求超时；全市场参数搜索请使用 Qlib 项目数据实验。",
+            )
+            result.setdefault("params", {})["requested_universe_limit"] = requested_universe_limit
+        backtest_repo = BacktestRepository()
+        for trial in result.get("trials", []):
+            backtest_result = trial.pop("backtest_result", None)
+            if backtest_result:
+                await backtest_repo.save_result(backtest_result)
+        return await ResearchRepository().save_experiment(result)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Parameter grid experiment failed")
+        raise HTTPException(status_code=500, detail=f"参数实验执行失败: {exc}") from exc
 
 
 @router.post("/experiments/run-qlib")

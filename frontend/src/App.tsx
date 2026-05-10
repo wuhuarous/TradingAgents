@@ -10,6 +10,7 @@ import TradingLog from './pages/TradingLog';
 import Settings from './pages/Settings';
 import SimulationLab from './pages/SimulationLab';
 import BacktestLab from './pages/BacktestLab';
+import Reports from './pages/Reports';
 
 export default function App() {
   return (
@@ -20,6 +21,7 @@ export default function App() {
         <Route path="/stock" element={<StockDetail />} />
         <Route path="/simulation" element={<SimulationLab />} />
         <Route path="/backtest" element={<BacktestLab />} />
+        <Route path="/reports" element={<Reports />} />
         <Route path="/screener" element={<Screener />} />
         <Route path="/news" element={<NewsFeed />} />
         <Route path="/analysis" element={<AnalysisDetail />} />

@@ -5,7 +5,7 @@ from fastapi import APIRouter, Query
 from fastapi.concurrency import run_in_threadpool
 
 from tradingAgents.data.database.data_quality_repo import DataQualityRepository
-from tradingAgents.data.database.market_sync import sync_kline_daily_batch
+from tradingAgents.data.database.market_sync import sync_a_stock_daily_full, sync_kline_daily_batch
 from tradingAgents.data.storage.event_store import database_status_async
 
 router = APIRouter(prefix="/api/data-quality", tags=["data-quality"])
@@ -66,3 +66,25 @@ async def sync_daily_klines(
     role: str = Query("all"),
 ):
     return await run_in_threadpool(sync_kline_daily_batch, market, limit, role)
+
+
+@router.post("/sync-klines/full-a-stock")
+async def sync_full_a_stock_daily_klines(
+    limit: int | None = Query(None, ge=1, le=6000),
+    batch_size: int = Query(50, ge=1, le=500),
+    max_workers: int = Query(4, ge=1, le=12),
+    force: bool = Query(False),
+    min_rows: int = Query(200, ge=1, le=400),
+    persist_universe: bool = Query(False),
+):
+    return await run_in_threadpool(
+        sync_a_stock_daily_full,
+        limit,
+        batch_size,
+        max_workers,
+        force,
+        min_rows,
+        0.2,
+        None,
+        persist_universe,
+    )

@@ -15,6 +15,7 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 export const api = {
   // Account
   getAccount: () => request<any>('/account/'),
+  getAccountOverview: () => request<any>('/account/overview'),
   getPositions: () => request<any[]>('/account/positions'),
   getOrders: (limit?: number) =>
     request<any[]>(`/account/orders${limit ? `?limit=${limit}` : ''}`),
@@ -67,9 +68,14 @@ export const api = {
     request<any>(`/simulation/backfill-reviews?limit=${limit || 20}&force_latest=${forceLatest ? 'true' : 'false'}`, { method: 'POST' }),
   syncDailyKlines: (market: string, limit?: number) =>
     request<any>(`/data-quality/sync-klines?market=${market}&limit=${limit || 50}&role=all`, { method: 'POST' }),
+  getDailyPnl: (days?: number) =>
+    request<any>(`/portfolio/daily-pnl?days=${days || 30}`),
+  getPortfolioReport: (days?: number) =>
+    request<any>(`/portfolio/report?days=${days || 180}`),
 
   // Backtest
   runBacktest: (params: {
+    strategy?: string;
     market: string;
     period: string;
     initial_cash?: number;
@@ -78,6 +84,7 @@ export const api = {
     rebalance_days?: number;
   }) => {
     const query = new URLSearchParams({
+      strategy: params.strategy || 'baseline_momentum',
       market: params.market,
       period: params.period,
       initial_cash: String(params.initial_cash || 1000000),
@@ -137,6 +144,7 @@ export const api = {
     return request<any>(`/research/experiments/run-qlib?${query.toString()}`, { method: 'POST' });
   },
   runResearchGrid: (params: {
+    strategy?: string;
     market: string;
     period: string;
     initial_cash?: number;
@@ -145,6 +153,7 @@ export const api = {
     rebalance_options?: string;
   }) => {
     const query = new URLSearchParams({
+      strategy: params.strategy || 'baseline_momentum',
       market: params.market,
       period: params.period,
       initial_cash: String(params.initial_cash || 1000000),
