@@ -124,7 +124,7 @@ flowchart LR
 
 ### 🌍 行情总览
 
-![行情总览](docs/images/docs/images/127.0.0.1_3000_market.png)
+![行情总览](docs/images/127.0.0.1_3000_market.png)
 
 展示指数行情、涨跌幅榜、成交额榜、市场热度、热门行业和热门概念。
 
