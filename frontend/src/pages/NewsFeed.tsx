@@ -22,12 +22,16 @@ export default function NewsFeed() {
   const [news, setNews] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
+  const loadNews = (force = false) => {
     setLoading(true);
-    api.getNews(market, 60)
+    api.getNews(market, 60, force)
       .then((data) => setNews(data || []))
       .catch(() => setNews([]))
       .finally(() => setLoading(false));
+  };
+
+  useEffect(() => {
+    loadNews(false);
   }, [market]);
 
   const stats = useMemo(() => {
@@ -60,6 +64,9 @@ export default function NewsFeed() {
             {m.label}
           </button>
         ))}
+        <button className="market-tab" onClick={() => loadNews(true)} disabled={loading}>
+          刷新资讯
+        </button>
       </div>
 
       <section className="news-dashboard">

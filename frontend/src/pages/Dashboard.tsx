@@ -5,6 +5,7 @@ import PositionTable from '../components/PositionTable';
 import PnLChart from '../components/PnLChart';
 
 interface Account {
+  initial_capital: number;
   total_value: number;
   cash: number;
   total_pnl: number;
@@ -29,10 +30,12 @@ export default function Dashboard() {
   const [runs, setRuns] = useState<any[]>([]);
 
   useEffect(() => {
-    api.getAccountOverview().then((data) => {
+    const loadAccount = (forcePrices = false) => api.getAccountOverview(forcePrices).then((data) => {
       setAccount(data.account);
       setPositions(data.positions || []);
     }).catch(() => {});
+    loadAccount(true);
+    const accountTimer = window.setInterval(() => loadAccount(false), 15000);
     api.getSimulationSummary().then(setSummary).catch(() => {});
     api.getQuantReadiness().then(setReadiness).catch(() => {});
     api.getSimulationRankings(10).then(setRankings).catch(() => {});
@@ -45,10 +48,18 @@ export default function Dashboard() {
         total_value: Number(item.total_value || 0),
       })));
     }).catch(() => setPnlHistory([]));
+    return () => window.clearInterval(accountTimer);
   }, []);
 
-  const pnlPct = account ? account.total_pnl_pct * 100 : 0;
-  const isGain = account ? account.total_pnl >= 0 : true;
+  const livePositionsValue = positions.reduce(
+    (sum, item) => sum + Number(item.market_value ?? Number(item.quantity || 0) * Number(item.current_price || 0)),
+    0,
+  );
+  const liveTotalValue = account ? Number(account.cash || 0) + livePositionsValue : 0;
+  const liveTotalPnl = account ? liveTotalValue - Number(account.initial_capital || 0) : 0;
+  const livePnlPct = account && account.initial_capital > 0 ? liveTotalPnl / account.initial_capital : 0;
+  const pnlPct = livePnlPct * 100;
+  const isGain = liveTotalPnl >= 0;
   const targetPct = (summary?.target_annual_return || 0.5) * 100;
   const targetProgress = Math.max(0, Math.min(100, targetPct ? (pnlPct / targetPct) * 100 : 0));
 
@@ -71,17 +82,17 @@ export default function Dashboard() {
             <div className="metric-card primary">
               <div className="metric-label">总资产</div>
               <div className="metric-value">
-                ¥{account.total_value.toLocaleString()}
+                ¥{formatMoney(liveTotalValue)}
               </div>
               <div className="metric-sub">
-                可用现金 ¥{account.cash.toLocaleString()}
+                可用现金 ¥{formatMoney(account.cash)}
               </div>
             </div>
 
             <div className="metric-card">
               <div className="metric-label">持仓市值</div>
               <div className="metric-value" style={{ fontSize: 'var(--font-size-2xl)' }}>
-                ¥{account.positions_value?.toLocaleString() || '0'}
+                ¥{formatMoney(livePositionsValue)}
               </div>
               <div className="metric-sub">
                 {positions.length} 个标的
@@ -94,7 +105,7 @@ export default function Dashboard() {
                 color: isGain ? 'var(--gain)' : 'var(--loss)',
                 fontSize: 'var(--font-size-2xl)',
               }}>
-                {isGain ? '+' : ''}¥{account.total_pnl.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                {isGain ? '+' : ''}¥{formatMoney(liveTotalPnl)}
               </div>
               <div className={`metric-sub ${isGain ? 'gain' : 'loss'}`}>
                 {isGain ? '↑' : '↓'} {pnlPct.toFixed(2)}%
@@ -246,6 +257,13 @@ function statusLabel(status: string) {
     blocked: '未就绪',
   };
   return map[status] || status;
+}
+
+function formatMoney(value?: number) {
+  return Number(value || 0).toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
 }
 
 function formatDay(value?: string) {

@@ -14,9 +14,12 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 
 export const api = {
   // Account
-  getAccount: () => request<any>('/account/'),
-  getAccountOverview: () => request<any>('/account/overview'),
-  getPositions: () => request<any[]>('/account/positions'),
+  getAccount: (forcePrices?: boolean) =>
+    request<any>(`/account/${forcePrices ? '?force_prices=true' : ''}`),
+  getAccountOverview: (forcePrices?: boolean) =>
+    request<any>(`/account/overview${forcePrices ? '?force_prices=true' : ''}`),
+  getPositions: (forcePrices?: boolean) =>
+    request<any[]>(`/account/positions${forcePrices ? '?force_prices=true' : ''}`),
   getOrders: (limit?: number) =>
     request<any[]>(`/account/orders${limit ? `?limit=${limit}` : ''}`),
 
@@ -47,8 +50,8 @@ export const api = {
     }),
 
   // News
-  getNews: (market: string, limit?: number) =>
-    request<any[]>(`/news/?market=${market}&limit=${limit || 30}`),
+  getNews: (market: string, limit?: number, refresh?: boolean) =>
+    request<any[]>(`/news/?market=${market}&limit=${limit || 30}${refresh ? '&refresh=true' : ''}`),
 
   // Simulation training
   getSimulationSummary: () => request<any>('/simulation/summary'),

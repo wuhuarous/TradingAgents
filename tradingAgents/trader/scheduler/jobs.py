@@ -2,16 +2,15 @@
 import asyncio
 import logging
 from datetime import datetime
-from zoneinfo import ZoneInfo
 
 from tradingAgents.config.settings import settings
 from tradingAgents.data.universe import get_universe
 from tradingAgents.engine.dataflows.interface import Market
 from tradingAgents.engine.dataflows.yfinance import YFinanceProvider
 from tradingAgents.data.providers.a_stock import AStockProvider
+from tradingAgents.utils.timezone import CN_TZ
 
 logger = logging.getLogger(__name__)
-CN_TZ = ZoneInfo("Asia/Shanghai")
 
 
 def _now_cn_iso() -> str:
@@ -223,6 +222,52 @@ def simulation_auto_cycle_job() -> dict:
         "positions": run.get("review", {}).get("positions", 0),
         "current_return": run.get("review", {}).get("current_return", 0),
     }
+
+
+def candidate_pool_refresh_job() -> dict:
+    """Refresh full-market lightweight candidate pool for simulation runs."""
+    try:
+        from tradingAgents.data.database.candidate_pool import refresh_candidate_pool
+
+        result = refresh_candidate_pool(market="a_stock", max_candidates=800)
+        result["timestamp"] = _now_cn_iso()
+        return result
+    except Exception as exc:
+        logger.warning("Candidate pool refresh failed: %s", exc)
+        return {
+            "status": "failed",
+            "timestamp": _now_cn_iso(),
+            "error": str(exc)[:300],
+        }
+
+
+def news_refresh_job() -> dict:
+    """Refresh market news hourly into standardized storage."""
+    from tradingAgents.server.routers.news_router import refresh_news_feed
+
+    markets = ("a_stock", "hk_stock", "us_stock")
+    result = {
+        "status": "completed",
+        "timestamp": _now_cn_iso(),
+        "interval": "1h",
+        "markets": {},
+    }
+    for market in markets:
+        try:
+            items = refresh_news_feed(market=market, limit=60)
+            result["markets"][market] = {
+                "count": len(items),
+                "latest": items[0].get("published_at") if items else None,
+                "sources": sorted({str(item.get("source") or "") for item in items if item.get("source")})[:8],
+            }
+        except Exception as exc:
+            logger.warning("News refresh failed for %s: %s", market, exc)
+            result["markets"][market] = {
+                "count": 0,
+                "error": str(exc)[:300],
+            }
+            result["status"] = "partial"
+    return result
 
 
 async def _get_pending_plans():

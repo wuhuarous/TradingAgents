@@ -3,7 +3,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from zoneinfo import ZoneInfo
+
+from tradingAgents.utils.timezone import CN_TZ
 
 
 @dataclass(frozen=True)
@@ -57,7 +58,7 @@ def china_trade_date(value: datetime | None = None):
     dt = value or datetime.now(timezone.utc)
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone(ZoneInfo("Asia/Shanghai")).date()
+    return dt.astimezone(CN_TZ).date()
 
 
 def is_same_china_trade_date(created_at: datetime | None, as_of: datetime | None = None) -> bool:

@@ -1,4 +1,6 @@
 """新闻舆情聚合 — 多源财经新闻 + 情绪分析（带缓存）"""
+from datetime import datetime, timedelta, timezone
+
 from fastapi import APIRouter, Query
 from fastapi.concurrency import run_in_threadpool
 
@@ -11,10 +13,11 @@ from tradingAgents.data.news.quality import standardize_news_item
 from tradingAgents.data.social.sources import fetch_social_sentiment
 from tradingAgents.data.social.sentiment import analyze_sentiment
 from tradingAgents.data.storage.event_store import append_events
+from tradingAgents.utils.timezone import CN_TZ
 
 router = APIRouter(prefix="/api/news", tags=["news"])
 
-NEWS_CACHE_TTL = 120
+NEWS_CACHE_TTL = 3600
 
 
 @router.get("/")
@@ -28,15 +31,29 @@ async def get_news(
     """获取聚合新闻列表，多源覆盖 + 情绪分析"""
     if not refresh:
         stored = await DataQualityRepository().list_news(market=market, symbol=symbol or None, limit=limit)
-        if stored:
+        if stored and _stored_news_fresh_enough(stored):
             return [_stored_news_to_feed(item) for item in stored]
+    else:
+        stored = []
     if symbol:
-        return await run_in_threadpool(_get_stock_news_cached, market, symbol, name, limit)
-    return await run_in_threadpool(_get_news_cached, market, limit)
+        fetcher = _get_stock_news_uncached if refresh else _get_stock_news_cached
+        fresh = await run_in_threadpool(fetcher, market, symbol, name, limit)
+    else:
+        fetcher = _get_news_uncached if refresh else _get_news_cached
+        fresh = await run_in_threadpool(fetcher, market, limit)
+    if fresh:
+        return fresh
+    if not refresh and stored:
+        return [_stored_news_to_feed(item) for item in stored]
+    return []
 
 
 @ttl_cache(ttl=NEWS_CACHE_TTL)
 def _get_news_cached(market: str, limit: int) -> list[dict]:
+    return _get_news_uncached(market, limit)
+
+
+def _get_news_uncached(market: str, limit: int) -> list[dict]:
     items = []
 
     # 国内新闻（多源：东方财富 + 新浪 + 百度）
@@ -58,6 +75,10 @@ def _get_news_cached(market: str, limit: int) -> list[dict]:
 
 @ttl_cache(ttl=NEWS_CACHE_TTL)
 def _get_stock_news_cached(market: str, symbol: str, name: str, limit: int) -> list[dict]:
+    return _get_stock_news_uncached(market, symbol, name, limit)
+
+
+def _get_stock_news_uncached(market: str, symbol: str, name: str, limit: int) -> list[dict]:
     items = []
     if market == "a_stock":
         try:
@@ -99,6 +120,8 @@ def _format_news_results(
             sentiment=sentiment,
             relevance_query=relevance_query,
         )
+        if not symbol and not _standardized_recent_enough(standardized):
+            continue
         results.append({
             "title": item.title,
             "source": item.source or "财经媒体",
@@ -116,6 +139,10 @@ def _format_news_results(
     append_events("news", standardized_rows)
     persist_news_items_sync(standardized_rows)
     return results
+
+
+def refresh_news_feed(market: str = "a_stock", limit: int = 60) -> list[dict]:
+    return _get_news_uncached(market, limit)
 
 
 def _dedupe(items: list) -> list:
@@ -142,3 +169,41 @@ def _stored_news_to_feed(item: dict) -> dict:
         "source_type": item.get("source_type", ""),
         "standardized": item,
     }
+
+
+def _stored_news_fresh_enough(items: list[dict]) -> bool:
+    """Only serve DB news directly when it was refreshed in the last hour."""
+    if not items:
+        return False
+    latest = max((_news_time(item) for item in items), default=None)
+    if latest is None:
+        return False
+    return (datetime.now(CN_TZ) - latest.astimezone(CN_TZ)).total_seconds() < NEWS_CACHE_TTL
+
+
+def _news_time(item: dict) -> datetime | None:
+    for key in ("fetched_at", "published_at", "created_at"):
+        value = item.get(key)
+        if not value:
+            continue
+        try:
+            dt = datetime.fromisoformat(str(value))
+        except ValueError:
+            continue
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
+    return None
+
+
+def _standardized_recent_enough(item: dict, max_age_days: int = 14) -> bool:
+    value = item.get("published_at")
+    if not value:
+        return True
+    try:
+        dt = datetime.fromisoformat(str(value))
+    except ValueError:
+        return True
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return datetime.now(timezone.utc) - dt.astimezone(timezone.utc) <= timedelta(days=max_age_days)

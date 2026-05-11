@@ -2,6 +2,11 @@
 from fastapi import APIRouter, Query
 
 from tradingAgents.server.routers.account import get_loaded_account
+from tradingAgents.data.database.candidate_pool import (
+    candidate_pool_status,
+    list_candidate_pool,
+    refresh_candidate_pool,
+)
 from tradingAgents.data.storage.event_store import database_status, read_events
 from tradingAgents.data.universe import get_universe
 from tradingAgents.trader.auto_strategy import QualityMomentumStrategy
@@ -45,6 +50,27 @@ def get_candidates(
 @router.get("/rankings")
 def get_all_market_rankings(limit: int = Query(10, ge=1, le=20)):
     return strategy.all_market_rankings(limit=limit)
+
+
+@router.post("/candidate-pool/refresh")
+def refresh_simulation_candidate_pool(
+    market: str = Query("a_stock"),
+    limit: int = Query(800, ge=20, le=3000),
+):
+    return refresh_candidate_pool(market=market, max_candidates=limit)
+
+
+@router.get("/candidate-pool")
+def get_simulation_candidate_pool(
+    market: str = Query("a_stock"),
+    limit: int = Query(50, ge=1, le=500),
+):
+    return list_candidate_pool(market=market, limit=limit)
+
+
+@router.get("/candidate-pool/status")
+def get_simulation_candidate_pool_status(market: str = Query("a_stock")):
+    return candidate_pool_status(market=market)
 
 
 @router.post("/run")

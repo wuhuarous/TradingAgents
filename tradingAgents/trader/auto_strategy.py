@@ -10,6 +10,9 @@ import json
 import math
 import asyncio
 import logging
+import time
+from collections.abc import Mapping
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -23,6 +26,7 @@ from tradingAgents.data.database.data_quality_repo import (
     persist_market_quotes_sync,
     persist_news_items_sync,
 )
+from tradingAgents.data.database.candidate_pool import latest_candidate_symbols, refresh_candidate_pool
 from tradingAgents.data.news.quality import standardize_news_item
 from tradingAgents.data.providers.a_stock import AStockProvider
 from tradingAgents.data.social.sources import fetch_social_sentiment
@@ -65,19 +69,96 @@ class QualityMomentumStrategy:
     def __init__(self, config: StrategyConfig | None = None):
         self.config = config or StrategyConfig()
 
-    def candidates(self, market: str = "a_stock", limit: int = 10, timeout_seconds: int = 45) -> list[dict[str, Any]]:
-        scored = []
+    def candidates(
+        self,
+        market: str = "a_stock",
+        limit: int = 10,
+        timeout_seconds: int = 45,
+        persist_inputs: bool = True,
+    ) -> list[dict[str, Any]]:
+        deadline = time.monotonic() + max(float(timeout_seconds or 0), 5.0)
         mkt = Market(market)
         provider = _provider_for(market)
         full_pool = get_universe(market, role="all", limit=None)
         scan_limit = max(int(settings.full_market_deep_scan_limit or FULL_MARKET_DEEP_SCAN_LIMIT), limit * 2)
-        pool = _prefilter_full_market(full_pool, market, provider, limit=scan_limit)
+        scan_limit = limit if not persist_inputs else max(limit, min(scan_limit, limit + 4))
+        pool = latest_candidate_symbols(
+            market,
+            limit=scan_limit,
+            tradable_only=not persist_inputs,
+        ) if market == "a_stock" else []
+        if not pool and market == "a_stock":
+            try:
+                refresh_candidate_pool(market=market, max_candidates=max(scan_limit, 200))
+                pool = latest_candidate_symbols(market, limit=scan_limit)
+            except Exception as exc:
+                logger.warning("Candidate pool refresh failed, falling back to live prefilter: %s", exc)
+        if not pool:
+            pool = _prefilter_full_market(full_pool, market, provider, limit=scan_limit)
 
+        if market == "a_stock" and not persist_inputs:
+            return self._score_candidates_parallel(
+                pool=pool,
+                market=market,
+                limit=limit,
+                deadline=deadline,
+                persist_inputs=persist_inputs,
+            )
+
+        scored = []
         for symbol, name in pool:
-            result = self.score_symbol(symbol, name, market, mkt, provider)
+            if time.monotonic() >= deadline:
+                logger.warning("Candidate scan stopped by time budget after %s/%s symbols", len(scored), len(pool))
+                break
+            result = self.score_symbol(symbol, name, market, mkt, provider, persist_inputs=persist_inputs)
             if result:
                 scored.append(result)
+            if len(scored) >= limit and time.monotonic() >= deadline - 5:
+                break
 
+        scored.sort(key=lambda x: x["final_score"], reverse=True)
+        return scored[:limit]
+
+    def _score_candidates_parallel(
+        self,
+        pool: list[tuple[str, str]],
+        market: str,
+        limit: int,
+        deadline: float,
+        persist_inputs: bool,
+    ) -> list[dict[str, Any]]:
+        scored: list[dict[str, Any]] = []
+        max_workers = min(4, max(1, len(pool)))
+        executor = ThreadPoolExecutor(max_workers=max_workers)
+        try:
+            futures = {
+                executor.submit(
+                    self.score_symbol,
+                    symbol,
+                    name,
+                    market,
+                    Market(market),
+                    _provider_for(market),
+                    persist_inputs,
+                ): (symbol, name)
+                for symbol, name in pool
+            }
+            for future in as_completed(futures):
+                if time.monotonic() >= deadline:
+                    logger.warning("Parallel candidate scan stopped by time budget after %s/%s symbols", len(scored), len(pool))
+                    break
+                try:
+                    result = future.result(timeout=max(deadline - time.monotonic(), 0.1))
+                except Exception as exc:
+                    symbol, _ = futures[future]
+                    logger.debug("Parallel candidate score failed for %s: %s", symbol, exc)
+                    continue
+                if result:
+                    scored.append(result)
+                if len(scored) >= limit:
+                    break
+        finally:
+            executor.shutdown(wait=False, cancel_futures=True)
         scored.sort(key=lambda x: x["final_score"], reverse=True)
         return scored[:limit]
 
@@ -153,6 +234,7 @@ class QualityMomentumStrategy:
         market: str,
         mkt: Market,
         provider,
+        persist_inputs: bool = True,
     ) -> dict[str, Any] | None:
         try:
             quote = provider.get_realtime_quote(symbol, mkt)
@@ -179,7 +261,6 @@ class QualityMomentumStrategy:
         sentiment = _sentiment_snapshot(news)
         fundamentals = _fundamental_snapshot(fin)
         short_term = _short_term_snapshot(hist, quote, fundamentals)
-        _persist_strategy_news(news, market, symbol, name)
         market_quote_event = {
             "created_at": datetime.now().isoformat(timespec="seconds"),
             "market": market,
@@ -196,28 +277,30 @@ class QualityMomentumStrategy:
             "volume": float(getattr(quote, "volume", 0) or 0),
             "quality_score": 82 if price > 0 else 35,
         }
-        append_event("market_quote", market_quote_event)
-        persist_market_quotes_sync([market_quote_event])
-        persist_financial_snapshot_sync(
-            market=market,
-            symbol=symbol,
-            metrics=fundamentals,
-            source="strategy_financials",
-            raw_payload=fin,
-        )
-        append_event("strategy_input", {
-            "market": market,
-            "symbol": symbol,
-            "name": name,
-            "quote": {
-                "price": price,
-                "change_pct": float(getattr(quote, "change_pct", 0) or 0),
-                "volume": float(getattr(quote, "volume", 0) or 0),
-            },
-            "fundamentals": fundamentals,
-            "technical": technical,
-            "sentiment": sentiment,
-        })
+        if persist_inputs:
+            _persist_strategy_news(news, market, symbol, name)
+            append_event("market_quote", market_quote_event)
+            persist_market_quotes_sync([market_quote_event])
+            persist_financial_snapshot_sync(
+                market=market,
+                symbol=symbol,
+                metrics=fundamentals,
+                source="strategy_financials",
+                raw_payload=fin,
+            )
+            append_event("strategy_input", {
+                "market": market,
+                "symbol": symbol,
+                "name": name,
+                "quote": {
+                    "price": price,
+                    "change_pct": float(getattr(quote, "change_pct", 0) or 0),
+                    "volume": float(getattr(quote, "volume", 0) or 0),
+                },
+                "fundamentals": fundamentals,
+                "technical": technical,
+                "sentiment": sentiment,
+            })
 
         quality_score = _quality_score(fundamentals)
         growth_score = _growth_score(fundamentals)
@@ -295,24 +378,25 @@ class QualityMomentumStrategy:
             "warnings": warnings,
             "trade_plan": plan,
         }
-        append_event("training_sample", {
-            "created_at": datetime.now().isoformat(timespec="seconds"),
-            "market": market,
-            "symbol": symbol,
-            "name": result["name"],
-            "action": action,
-            "final_score": result["final_score"],
-            "risk_level": risk_level,
-            "scores": result["scores"],
-            "fundamentals": fundamentals,
-            "technical": technical,
-            "short_term": short_term,
-            "sentiment": sentiment,
-            "trade_plan": result["trade_plan"],
-            "quality_score": result["final_score"],
-            "source": "quality_momentum_strategy",
-        })
-        _persist_factor_score(result)
+        if persist_inputs:
+            append_event("training_sample", {
+                "created_at": datetime.now().isoformat(timespec="seconds"),
+                "market": market,
+                "symbol": symbol,
+                "name": result["name"],
+                "action": action,
+                "final_score": result["final_score"],
+                "risk_level": risk_level,
+                "scores": result["scores"],
+                "fundamentals": fundamentals,
+                "technical": technical,
+                "short_term": short_term,
+                "sentiment": sentiment,
+                "trade_plan": result["trade_plan"],
+                "quality_score": result["final_score"],
+                "source": "quality_momentum_strategy",
+            })
+            _persist_factor_score(result)
         return result
 
     def run_cycle(self, account: VirtualAccount, market: str = "a_stock") -> dict[str, Any]:
@@ -324,7 +408,7 @@ class QualityMomentumStrategy:
             if pos.get("market", market) != market and market == "a_stock":
                 continue
             matched = next((c for c in candidates if c["symbol"] == symbol), None)
-            current_price = matched.get("price") if matched else pos.get("current_price", pos.get("avg_cost", 0))
+            current_price = matched.get("price") if matched and matched.get("price") else pos.get("current_price", pos.get("avg_cost", 0))
             avg_cost = pos.get("avg_cost", 0)
             pnl_pct = (current_price / avg_cost - 1) if avg_cost else 0
             sell_reason = _sell_reason(pnl_pct, matched, self.config)
@@ -440,23 +524,72 @@ class QualityMomentumStrategy:
             "top_candidates": candidates[:8],
             "review": _review_snapshot(account, self.config),
         }
-        _append_run(run)
-        append_event("simulation_run", run)
-        _persist_factor_scores(candidates, run_id)
-        _append_review_backfill(run)
-        return run
+        safe_run = _json_safe(run)
+        _append_run(safe_run)
+        append_event("simulation_run", safe_run)
+        _persist_factor_scores(_json_safe(candidates), run_id)
+        _append_review_backfill(safe_run)
+        return safe_run
 
     async def arun_cycle(self, account: VirtualAccount, market: str = "a_stock") -> dict[str, Any]:
         """Async DB-safe variant used by FastAPI endpoints."""
-        candidates = self.candidates(market=market, limit=12)
         orders = []
         decisions = []
+        trade_enabled = True
+        try:
+            candidates = await asyncio.wait_for(
+                asyncio.to_thread(
+                    self.candidates,
+                    market=market,
+                    limit=8,
+                    timeout_seconds=25,
+                    persist_inputs=False,
+                ),
+                timeout=30,
+            )
+        except asyncio.TimeoutError:
+            logger.warning("Simulation candidate scan timed out for market=%s", market)
+            trade_enabled = False
+            candidates = self.fast_candidates(market=market, limit=12)
+            decisions.append({
+                "symbol": "*",
+                "action": "SCAN_TIMEOUT",
+                "reason": "实时深度评分超过 30 秒，本轮使用快速候选画像展示，不执行自动买入卖出",
+            })
+        except Exception as exc:
+            logger.exception("Simulation candidate scan failed for market=%s", market)
+            trade_enabled = False
+            candidates = self.fast_candidates(market=market, limit=12)
+            decisions.append({
+                "symbol": "*",
+                "action": "SCAN_FAILED",
+                "reason": f"实时深度扫描失败，本轮使用快速候选画像展示，不执行自动买入卖出: {str(exc)[:80]}",
+            })
+
+        if not trade_enabled:
+            run_id = datetime.now().strftime("%Y%m%d%H%M%S")
+            run = {
+                "run_id": run_id,
+                "created_at": datetime.now().isoformat(timespec="seconds"),
+                "market": market,
+                "target_annual_return": self.config.target_annual_return,
+                "account": account.to_dict(),
+                "orders": orders,
+                "decisions": decisions,
+                "top_candidates": candidates[:8],
+                "review": _review_snapshot(account, self.config),
+            }
+            safe_run = _json_safe(run)
+            _append_run(safe_run)
+            append_event("simulation_run", safe_run)
+            _append_review_backfill(safe_run)
+            return safe_run
 
         for symbol, pos in list(account.positions.items()):
             if pos.get("market", market) != market and market == "a_stock":
                 continue
             matched = next((c for c in candidates if c["symbol"] == symbol), None)
-            current_price = matched.get("price") if matched else pos.get("current_price", pos.get("avg_cost", 0))
+            current_price = matched.get("price") if matched and matched.get("price") else pos.get("current_price", pos.get("avg_cost", 0))
             avg_cost = pos.get("avg_cost", 0)
             pnl_pct = (current_price / avg_cost - 1) if avg_cost else 0
             sell_reason = _sell_reason(pnl_pct, matched, self.config)
@@ -571,11 +704,12 @@ class QualityMomentumStrategy:
             "top_candidates": candidates[:8],
             "review": _review_snapshot(account, self.config),
         }
-        _append_run(run)
-        append_event("simulation_run", run)
-        await _persist_factor_scores_async(candidates, run_id)
-        _append_review_backfill(run)
-        return run
+        safe_run = _json_safe(run)
+        _append_run(safe_run)
+        append_event("simulation_run", safe_run)
+        _schedule_factor_persistence(_json_safe(candidates), run_id)
+        _append_review_backfill(safe_run)
+        return safe_run
 
     def recent_runs(self, limit: int = 20) -> list[dict[str, Any]]:
         rows = []
@@ -1139,8 +1273,41 @@ def _review_snapshot(account: VirtualAccount, config: StrategyConfig) -> dict[st
 
 def _append_run(run: dict[str, Any]) -> None:
     MEMORY_DIR.mkdir(parents=True, exist_ok=True)
+    safe_run = _json_safe(run)
     with RUN_LOG.open("a", encoding="utf-8") as fh:
-        fh.write(json.dumps(run, ensure_ascii=False) + "\n")
+        fh.write(json.dumps(safe_run, ensure_ascii=False, allow_nan=False) + "\n")
+
+
+def _json_safe(value: Any) -> Any:
+    """Convert numpy/pandas/provider objects into strict JSON primitives."""
+    if value is None or isinstance(value, (str, bool, int)):
+        return value
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, Mapping):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, pd.DataFrame):
+        return _json_safe(value.to_dict("records"))
+    if isinstance(value, pd.Series):
+        return _json_safe(value.to_list())
+    if hasattr(value, "item"):
+        try:
+            return _json_safe(value.item())
+        except Exception:
+            pass
+    try:
+        if pd.isna(value):
+            return None
+    except Exception:
+        pass
+    if hasattr(value, "isoformat"):
+        try:
+            return value.isoformat()
+        except Exception:
+            pass
+    return str(value)
 
 
 def _persist_factor_score(candidate: dict[str, Any], run_id: str = "") -> None:
@@ -1194,6 +1361,15 @@ async def _persist_factor_scores_async(candidates: list[dict[str, Any]], run_id:
             await data_repo.add_market_quotes(quote_rows)
     except Exception as exc:
         logger.debug("Async factor score persistence failed for run %s: %s", run_id, exc)
+
+
+def _schedule_factor_persistence(candidates: list[dict[str, Any]], run_id: str) -> None:
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        _persist_factor_scores(candidates, run_id)
+        return
+    loop.create_task(_persist_factor_scores_async(candidates, run_id))
 
 
 def _append_review_backfill(run: dict[str, Any]) -> None:

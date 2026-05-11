@@ -246,6 +246,41 @@ class AStockProvider(DataSourceProvider):
         # 3. 新浪单股回退
         return self._get_quote_sina(symbol)
 
+    def get_realtime_quotes(self, symbols: list[str], market: Market = Market.A) -> dict[str, StockQuote]:
+        """Fetch a small A-share quote batch without touching the full-market cache."""
+        if market != Market.A:
+            return {}
+        unique_symbols = [str(s).strip() for s in dict.fromkeys(symbols) if str(s).strip()]
+        if not unique_symbols:
+            return {}
+
+        quotes: dict[str, StockQuote] = {}
+        batch_size = 80
+        for i in range(0, len(unique_symbols), batch_size):
+            batch = unique_symbols[i:i + batch_size]
+            for symbol, d in _fetch_tencent_batch(batch).items():
+                price = d.get("price", 0)
+                prev = d.get("close", 0)
+                quotes[symbol] = StockQuote(
+                    symbol=symbol,
+                    name=str(d.get("name", "")),
+                    price=price,
+                    open=d.get("open", 0),
+                    high=d.get("high", 0),
+                    low=d.get("low", 0),
+                    close=prev,
+                    volume=d.get("volume", 0),
+                    change_pct=(price - prev) / prev if prev else 0,
+                    market=Market.A,
+                )
+
+        missing = [symbol for symbol in unique_symbols if symbol not in quotes]
+        for symbol in missing:
+            quote = self._get_quote_sina(symbol)
+            if quote.price > 0:
+                quotes[symbol] = quote
+        return quotes
+
     def _get_quote_sina(self, symbol: str) -> StockQuote:
         d = _fetch_sina_single(symbol)
         if d:

@@ -1,7 +1,7 @@
 import asyncio
 import time
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 
 from tradingAgents.server.models.trade import AccountSummary
 from tradingAgents.trader.account import VirtualAccount
@@ -15,13 +15,25 @@ _last_loaded_at = 0.0
 _last_background_refresh_at = 0.0
 
 
-async def _refresh_account(refresh_prices: bool = True, force: bool = False) -> VirtualAccount:
+async def _refresh_account(
+    refresh_prices: bool = True,
+    force: bool = False,
+    force_prices: bool = False,
+) -> VirtualAccount:
     async with _account_lock:
-        await _refresh_account_locked(refresh_prices=refresh_prices, force=force)
+        await _refresh_account_locked(
+            refresh_prices=refresh_prices,
+            force=force,
+            force_prices=force_prices,
+        )
         return _account
 
 
-async def _refresh_account_locked(refresh_prices: bool = True, force: bool = False) -> None:
+async def _refresh_account_locked(
+    refresh_prices: bool = True,
+    force: bool = False,
+    force_prices: bool = False,
+) -> None:
     global _last_loaded_at
     now = time.monotonic()
     should_load = force or _account._account_id is None or (now - _last_loaded_at) >= _ACCOUNT_CACHE_TTL_SECONDS
@@ -44,29 +56,29 @@ async def _refresh_account_locked(refresh_prices: bool = True, force: bool = Fal
             pass
     if refresh_prices and _account.positions:
         try:
-            await _account.arefresh_market_prices()
+            await _account.arefresh_market_prices(force=force_prices)
         except Exception:
             pass
 
 
 @router.get("/", response_model=AccountSummary)
-async def get_account():
+async def get_account(force_prices: bool = Query(False)):
     async with _account_lock:
-        await _refresh_account_locked(refresh_prices=True)
+        await _refresh_account_locked(refresh_prices=True, force_prices=force_prices)
         return _account.to_dict()
 
 
 @router.get("/positions")
-async def get_positions():
+async def get_positions(force_prices: bool = Query(False)):
     async with _account_lock:
-        await _refresh_account_locked(refresh_prices=False)
+        await _refresh_account_locked(refresh_prices=True, force_prices=force_prices)
         return _account.get_position_summary()
 
 
 @router.get("/overview")
-async def get_account_overview():
+async def get_account_overview(force_prices: bool = Query(False)):
     async with _account_lock:
-        await _refresh_account_locked(refresh_prices=True)
+        await _refresh_account_locked(refresh_prices=True, force_prices=force_prices)
         return {
             "account": _account.to_dict(),
             "positions": _account.get_position_summary(),

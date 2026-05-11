@@ -1,7 +1,6 @@
 """调度器运行器 — APScheduler 集成自动交易"""
 import logging
 from typing import Optional
-from zoneinfo import ZoneInfo
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -10,17 +9,19 @@ from apscheduler.jobstores.memory import MemoryJobStore
 from tradingAgents.config.settings import settings
 from tradingAgents.data.universe import get_universe_symbols
 from tradingAgents.trader.scheduler.jobs import (
+    candidate_pool_refresh_job,
     intraday_monitoring_job,
     market_close_settlement_job,
+    news_refresh_job,
     market_open_trading_job,
     pre_market_analysis_job,
     review_backfill_job,
     simulation_auto_cycle_job,
 )
 from tradingAgents.data.database.market_sync import sync_market_quotes, sync_kline_daily
+from tradingAgents.utils.timezone import CN_TZ
 
 logger = logging.getLogger(__name__)
-CN_TZ = ZoneInfo("Asia/Shanghai")
 
 
 def _sync_watchlist_klines():
@@ -92,6 +93,30 @@ class TradingScheduler:
                 "name": "行情数据同步",
                 "func": sync_market_quotes,
                 "cron": "*/1 9-15 * * mon-fri",
+            },
+            {
+                "id": "news_refresh",
+                "name": "新闻资讯刷新",
+                "func": news_refresh_job,
+                "cron": "0 8-23 * * *",
+            },
+            {
+                "id": "candidate_pool_refresh",
+                "name": "全市场候选池刷新",
+                "func": candidate_pool_refresh_job,
+                "cron": "25 9 * * mon-fri",
+            },
+            {
+                "id": "candidate_pool_refresh_1040",
+                "name": "10:40 候选池刷新",
+                "func": candidate_pool_refresh_job,
+                "cron": "35 10 * * mon-fri",
+            },
+            {
+                "id": "candidate_pool_refresh_1400",
+                "name": "14:00 候选池刷新",
+                "func": candidate_pool_refresh_job,
+                "cron": "55 13 * * mon-fri",
             },
             {
                 "id": "kline_daily_sync",

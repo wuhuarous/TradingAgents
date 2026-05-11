@@ -5,16 +5,15 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from typing import Optional
-from zoneinfo import ZoneInfo
 
 from tradingAgents.config.settings import settings
 from tradingAgents.trader.trade_rules import compute_trade_costs, is_same_china_trade_date
+from tradingAgents.utils.timezone import CN_TZ
 
 logger = logging.getLogger(__name__)
 
 # Price-refresh TTL: skip repeated market-price fetches within this window
-_PRICE_CACHE_TTL_SECONDS = 60.0
-CN_TZ = ZoneInfo("Asia/Shanghai")
+_PRICE_CACHE_TTL_SECONDS = 12.0
 
 
 class VirtualAccount:
@@ -109,16 +108,12 @@ class VirtualAccount:
         if not self.positions:
             return {"updated": 0, "failed": 0}
 
+        price_map = await asyncio.to_thread(_latest_position_prices, self.positions)
+
         updated = 0
         failed = 0
         for symbol, pos in list(self.positions.items()):
-            try:
-                price = await asyncio.to_thread(_latest_position_price, symbol, pos.get("market", "a_stock"))
-            except Exception as exc:
-                logger.debug("Quote refresh failed for %s: %s", symbol, exc)
-                failed += 1
-                continue
-
+            price = float(price_map.get(symbol) or 0)
             if price <= 0:
                 failed += 1
                 continue
@@ -415,6 +410,37 @@ def _latest_position_price(symbol: str, market: str) -> float:
     else:
         quote = YFinanceProvider().get_realtime_quote(symbol, Market.US)
     return float(getattr(quote, "price", 0) or 0)
+
+
+def _latest_position_prices(positions: dict[str, dict]) -> dict[str, float]:
+    from tradingAgents.data.providers.a_stock import AStockProvider
+    from tradingAgents.engine.dataflows.interface import Market
+
+    prices: dict[str, float] = {}
+    a_symbols = [
+        symbol for symbol, pos in positions.items()
+        if pos.get("market", "a_stock") == "a_stock"
+    ]
+    if a_symbols:
+        provider = AStockProvider()
+        try:
+            quotes = provider.get_realtime_quotes(a_symbols, Market.A)
+        except Exception as exc:
+            logger.debug("A-share batch quote refresh failed: %s", exc)
+            quotes = {}
+        for symbol in a_symbols:
+            quote = quotes.get(symbol)
+            price = float(getattr(quote, "price", 0) or 0) if quote else 0
+            if price <= 0:
+                price = _latest_position_price(symbol, "a_stock")
+            prices[symbol] = price
+
+    for symbol, pos in positions.items():
+        market = pos.get("market", "a_stock")
+        if market == "a_stock":
+            continue
+        prices[symbol] = _latest_position_price(symbol, market)
+    return prices
 
 
 def _run_coro_blocking(coro):

@@ -25,6 +25,14 @@ function fmtPrice(value: number | null | undefined, market: string) {
   return `${CURRENCY[market] || ''}${Number(value).toFixed(2)}`;
 }
 
+function fmtAmount(value: number | null | undefined) {
+  const n = Number(value || 0);
+  if (!n) return '--';
+  if (Math.abs(n) >= 100000000) return `${(n / 100000000).toFixed(1)}亿`;
+  if (Math.abs(n) >= 10000) return `${(n / 10000).toFixed(1)}万`;
+  return n.toLocaleString(undefined, { maximumFractionDigits: 0 });
+}
+
 export default function MarketOverview() {
   const [market, setMarket] = useState('a_stock');
   const [data, setData] = useState<any>(null);
@@ -129,6 +137,21 @@ export default function MarketOverview() {
             })}
           </section>
 
+          {data.breadth && (
+            <section className="section">
+              <div className="section-header">
+                <h2>市场温度</h2>
+                <span className="section-badge">覆盖 {data.breadth.total || data.universe_count || 0} 只</span>
+              </div>
+              <div className="market-pulse-grid">
+                <BreadthCard label="上涨家数" value={data.breadth.up} sub={fmtPct(data.breadth.up_ratio)} tone="gain" />
+                <BreadthCard label="下跌家数" value={data.breadth.down} sub={fmtPct(data.breadth.down_ratio)} tone="loss" />
+                <BreadthCard label="涨停家数" value={data.breadth.limit_up} sub="短线情绪" tone="gain" />
+                <BreadthCard label="跌停家数" value={data.breadth.limit_down} sub="风险释放" tone="loss" />
+              </div>
+            </section>
+          )}
+
           {/* Indices */}
           {data.indices && data.indices.length > 0 && (
             <div className="indices-row" style={{
@@ -151,12 +174,38 @@ export default function MarketOverview() {
             </div>
           )}
 
+          {data.hot_sectors?.length > 0 && (
+            <section className="section">
+              <div className="section-header">
+                <h2>热门板块</h2>
+                <span className="section-badge">行业 + 概念</span>
+              </div>
+              <div className="market-leader-grid">
+                {data.hot_sectors.map((sector: any, index: number) => (
+                  <div className="leader-card" key={`${sector.type}-${sector.name}-${index}`}>
+                    <div>
+                      <strong>{sector.name}</strong>
+                      <p>{sector.type === 'industry' ? '行业' : '概念'} · {sector.source}</p>
+                    </div>
+                    <span className={`action-pill ${sector.change_pct >= 0 ? 'buy' : 'sell'}`}>
+                      {fmtPct(sector.change_pct)}
+                    </span>
+                    <b>{sector.leader || '--'}</b>
+                    <p style={{ gridColumn: '1 / -1', margin: 0, color: 'var(--text-muted)', fontSize: 12 }}>
+                      净流入 {fmtAmount(sector.net_inflow)} · 领涨 {fmtPct(sector.leader_change_pct)}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
+
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-6)' }}>
             {/* Top Gainers */}
             <section>
               <div className="section-header">
                 <h2>涨幅榜</h2>
-                <span className="section-badge">Top 5</span>
+                <span className="section-badge">Top {data.top_gainers?.length || 0}</span>
               </div>
               {data.top_gainers?.length > 0 ? (
                 <table className="data-table">
@@ -189,7 +238,7 @@ export default function MarketOverview() {
             <section>
               <div className="section-header">
                 <h2>跌幅榜</h2>
-                <span className="section-badge">Top 5</span>
+                <span className="section-badge">Top {data.top_losers?.length || 0}</span>
               </div>
               {data.top_losers?.length > 0 ? (
                 <table className="data-table">
@@ -218,6 +267,37 @@ export default function MarketOverview() {
               )}
             </section>
           </div>
+
+          {data.top_turnover?.length > 0 && (
+            <section className="section" style={{ marginTop: 'var(--space-8)' }}>
+              <div className="section-header">
+                <h2>成交额榜</h2>
+                <span className="section-badge">资金活跃</span>
+              </div>
+              <table className="data-table">
+                <thead>
+                  <tr><th>代码</th><th>名称</th><th>价格</th><th>涨跌幅</th><th>成交额</th></tr>
+                </thead>
+                <tbody>
+                  {data.top_turnover.map((s: any) => (
+                    <tr key={s.symbol}>
+                      <td className="mono" style={{ fontWeight: 600 }}>
+                        <Link to={`/stock?symbol=${s.symbol}&market=${market}`} style={{ color: 'var(--amber)', textDecoration: 'none' }}>
+                          {s.symbol}
+                        </Link>
+                      </td>
+                      <td>{s.name}</td>
+                      <td className="mono">{fmtPrice(s.price, market)}</td>
+                      <td className={`mono ${s.change_pct >= 0 ? 'gain' : 'loss'}`}>
+                        {fmtPct(s.change_pct)}
+                      </td>
+                      <td className="mono">{fmtAmount(s.turnover)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </section>
+          )}
 
           {rankings && (
             <section className="section" style={{ marginTop: 'var(--space-8)' }}>
@@ -250,7 +330,7 @@ export default function MarketOverview() {
           <section className="section" style={{ marginTop: 'var(--space-8)' }}>
             <div className="section-header">
               <h2>热门标的</h2>
-              <span className="section-badge">{data.hot_stocks?.length || 0} 个</span>
+              <span className="section-badge">成交活跃 {data.hot_stocks?.length || 0} 个</span>
             </div>
             {data.hot_stocks?.length > 0 ? (
               <table className="data-table">
@@ -283,6 +363,18 @@ export default function MarketOverview() {
           </section>
         </>
       )}
+    </div>
+  );
+}
+
+function BreadthCard({ label, value, sub, tone }: { label: string; value: number; sub: string; tone: 'gain' | 'loss' }) {
+  return (
+    <div className="metric-card">
+      <div className="metric-label">{label}</div>
+      <div className={`metric-value ${tone}`} style={{ fontSize: 'var(--font-size-2xl)' }}>
+        {Number(value || 0).toLocaleString()}
+      </div>
+      <div className={`metric-sub ${tone}`}>{sub}</div>
     </div>
   );
 }

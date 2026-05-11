@@ -35,8 +35,8 @@ export default function PositionTable({ positions }: { positions: Position[] }) 
       </thead>
       <tbody>
         {positions.map((p) => {
-          const mv = p.market_value || p.quantity * p.current_price;
-          const pnl = p.pnl || (p.current_price - p.avg_cost) * p.quantity;
+          const mv = p.market_value ?? p.quantity * p.current_price;
+          const pnl = p.pnl ?? (p.current_price - p.avg_cost) * p.quantity;
           const isGain = p.pnl_pct >= 0;
           return (
             <tr key={p.symbol}>

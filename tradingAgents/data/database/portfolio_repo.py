@@ -3,14 +3,12 @@ from __future__ import annotations
 
 from typing import Any
 from datetime import datetime, timezone
-from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
 
 from tradingAgents.data.database.connection import get_pg_session
 from tradingAgents.data.database.models import PortfolioSnapshot
-
-CN_TZ = ZoneInfo("Asia/Shanghai")
+from tradingAgents.utils.timezone import CN_TZ
 
 
 class PortfolioRepository:

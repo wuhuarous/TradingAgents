@@ -56,3 +56,29 @@ def init_clickhouse():
         PARTITION BY toYYYYMM(date)
         ORDER BY (symbol, date)
     """)
+
+    ch.command("""
+        CREATE TABLE IF NOT EXISTS candidate_pool (
+            snapshot_id String,
+            market String,
+            symbol String,
+            name String,
+            signal_score Float64,
+            price Float64,
+            change_pct Float64,
+            volume UInt64,
+            amount Float64,
+            market_cap Float64,
+            limit_up_30d UInt8,
+            double_volume_30d UInt8,
+            breakout UInt8,
+            volume_ratio Float64,
+            close_position Float64,
+            reasons String,
+            warnings String,
+            updated_at DateTime DEFAULT now(),
+            date Date DEFAULT toDate(updated_at)
+        ) ENGINE = ReplacingMergeTree(updated_at)
+        PARTITION BY toYYYYMM(date)
+        ORDER BY (market, snapshot_id, symbol)
+    """)
